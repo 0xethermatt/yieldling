@@ -1,0 +1,10 @@
+{
+  "84532": {
+    "network": "baseSepolia",
+    "chainId": "84532",
+    "YieldPetTreasury": "0xC26c2CB8331DEB96A05fBc7Db5d26d1FAd341E3F",
+    "wstETH": "0x13e5FB0B6534BB22cBC59Fae339dbBE0Dc906871",
+    "deployer": "0xB17D9c874751E417A1f6586DC1D9AAf8951869D9",
+    "deployedAt": "2026-03-20T19:07:33.068Z"
+  }
+}
