@@ -3,10 +3,12 @@ import {
   depositToZyfai,
   ensureSessionKey,
   getYieldEarned,
+  getDailyApyHistory,
   getStrategyApy,
   getConservativeOpportunities,
   getAggressiveOpportunities,
   getPositions,
+  getPositionDetails,
   withdrawYield,
 } from "./zyfai.js";
 const PET_NAME_KEY = "yieldling_pet_name";
@@ -88,12 +90,14 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 }
 .topbar-level { font-size: 11px; font-weight: 700; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
 .streak-pill {
-  display: flex; align-items: center; gap: 6px;
+  display: flex; flex-direction: column; align-items: center;
   background: var(--surface2); border: 1px solid var(--border);
-  border-radius: 20px; padding: 7px 14px;
-  font-size: 14px; font-weight: 800;
+  border-radius: 20px; padding: 6px 14px 5px;
+  gap: 1px; cursor: default;
 }
+.streak-top { display: flex; align-items: center; gap: 5px; font-size: 14px; font-weight: 800; }
 .streak-count { font-family: var(--mono); color: var(--gold); }
+.streak-lbl { font-size: 9px; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 1.5px; }
 /* stat cards */
 .stat-cards {
   display: grid; grid-template-columns: 1fr 1fr;
@@ -353,6 +357,51 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
   animation: floatUp .9s ease-out forwards;
 }
 @keyframes floatUp { 0%{opacity:1;transform:translateY(0)} 100%{opacity:0;transform:translateY(-50px)} }
+/* ── INFO BUTTONS & TOOLTIP ── */
+.info-btn {
+  background: none; border: none; padding: 0 0 0 3px;
+  font-size: 13px; color: var(--dim); opacity: .5;
+  cursor: pointer; line-height: 1; flex-shrink: 0;
+  transition: opacity .15s; user-select: none;
+  font-family: sans-serif; vertical-align: middle;
+}
+.info-btn:hover { opacity: 1; }
+/* inside need buttons — rendered as span */
+.need-info {
+  position: absolute; top: 6px; right: 7px;
+  font-size: 12px; color: var(--dim); opacity: .45;
+  cursor: pointer; line-height: 1; user-select: none;
+  z-index: 2; transition: opacity .15s;
+}
+.need-info:hover { opacity: .9; }
+/* tooltip overlay */
+.tip-overlay {
+  position: fixed; inset: 0; z-index: 200;
+  display: flex; align-items: center; justify-content: center;
+  padding: 32px 24px;
+  background: rgba(4,6,14,.55);
+  backdrop-filter: blur(3px);
+}
+.tip-card {
+  background: var(--surface2); border: 1px solid var(--teal);
+  border-radius: 18px; padding: 18px 20px;
+  max-width: 300px; width: 100%;
+  box-shadow: 0 12px 40px rgba(0,0,0,.55), 0 0 0 1px rgba(106,255,212,.08);
+  animation: tipIn .18s cubic-bezier(.175,.885,.32,1.275);
+}
+@keyframes tipIn { from{opacity:0;transform:scale(.9)} to{opacity:1;transform:scale(1)} }
+.tip-text {
+  font-size: 13px; font-weight: 600; color: var(--text);
+  line-height: 1.7; white-space: pre-line;
+}
+.tip-dismiss {
+  margin-top: 14px; display: block; width: 100%;
+  background: rgba(106,255,212,.08); border: 1px solid rgba(106,255,212,.25);
+  color: var(--teal); font-family: var(--font); font-size: 12px; font-weight: 800;
+  padding: 8px; border-radius: 10px; cursor: pointer; transition: background .15s;
+  text-align: center;
+}
+.tip-dismiss:hover { background: rgba(106,255,212,.15); }
 `;
 const styleEl = document.createElement("style");
 styleEl.textContent = css;
@@ -363,6 +412,53 @@ const STAGES = [
   { threshold: 10, stage: 3, name: "Elder",     level: "LV. 3" },
   { threshold: 50, stage: 4, name: "Legend",    level: "LV. 4" },
 ];
+// ── Tooltip content ───────────────────────────────────────────────────────────
+const TIP_EVO    = `Your Yieldling evolves as yield accumulates. Each stage unlocks a new form:\n\n🥚  $0 — Egg (just hatched)\n🐾  $1 — Hatchling\n🐲  $10 — Drake\n🐉  $50 — Legend\n\nKeep earning to evolve!`;
+const TIP_XP     = "XP tracks your total yield earned. Hit each threshold to evolve your Yieldling into a more powerful form.";
+const TIP_HEALTH = "Health is 100% when your Yieldling has an active deposit earning yield. Make a deposit to bring your Yieldling to life!";
+const TIP_FEED   = "Tap to deposit $1 USDC into your ZyFAI yield account. More deposits = more yield = faster evolution.";
+const TIP_PLAY   = "Tap to deposit $1 USDC and boost your Yieldling's mood. Happier Yieldlings earn bonus XP.";
+const TIP_REST   = "Tap to deposit $1 USDC and restore energy. A rested Yieldling is a productive Yieldling.";
+
+// ── Needs persistence & depletion ────────────────────────────────────────────
+const NEEDS_KEY      = "yieldling_needs";
+const LAST_VISIT_KEY = "yieldling_last_visit";
+const MIN_BAR        = 10;   // bars never auto-deplete below 10%
+
+// % lost per millisecond for each bar (full depletion durations below)
+const DEPLETION_MS = {
+  hunger: 100 / (24 * 3_600_000),   // full drain over 24 h
+  mood:   100 / (48 * 3_600_000),   // full drain over 48 h (1.5× if away >12 h)
+  energy: 100 / (36 * 3_600_000),   // full drain over 36 h
+};
+
+// Read saved bars and apply offline depletion for the time elapsed since last visit
+function loadNeeds() {
+  try {
+    const saved     = JSON.parse(localStorage.getItem(NEEDS_KEY) ?? "null");
+    const lastVisit = parseInt(localStorage.getItem(LAST_VISIT_KEY) ?? "0", 10);
+    const clamp     = v => Math.max(MIN_BAR, Math.min(100, v ?? 90));
+    const base      = saved
+      ? { hunger: clamp(saved.hunger), mood: clamp(saved.mood), energy: clamp(saved.energy) }
+      : { hunger: 90, mood: 90, energy: 90 };
+
+    if (lastVisit > 0) {
+      const elapsedMs       = Math.max(0, Date.now() - lastVisit);
+      const hoursSinceVisit = elapsedMs / 3_600_000;
+      const moodMult        = hoursSinceVisit > 12 ? 1.5 : 1; // missed you 🥺
+
+      return {
+        hunger: Math.max(MIN_BAR, base.hunger - DEPLETION_MS.hunger * elapsedMs),
+        mood:   Math.max(MIN_BAR, base.mood   - DEPLETION_MS.mood   * elapsedMs * moodMult),
+        energy: Math.max(MIN_BAR, base.energy - DEPLETION_MS.energy * elapsedMs),
+      };
+    }
+    return base;
+  } catch {
+    return { hunger: 90, mood: 90, energy: 90 };
+  }
+}
+
 // Per-character micro-transaction amounts
 const TAP_CFG = {
   stabby: { amount: 1,      asset: "USDC", floatLabel: "+$1",         toastLabel: "+$1 deposited"       },
@@ -383,22 +479,31 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   const petName     = localStorage.getItem(PET_NAME_KEY)?.trim() || "";
   const charName    = petName || defaultName;
   const [yieldEarned, setYieldEarned] = useState(0);
-  const [deposited,   setDeposited]   = useState(0);
+  const [deposited,      setDeposited]      = useState(0);
+  const [depositLoaded,  setDepositLoaded]  = useState(false);
   const [petState, setPetState] = useState("ok");
   const [showEvo, setShowEvo] = useState(false);
   const [prevStageName, setPrevStageName] = useState(null);
-  const [streak, setStreak] = useState(12);
+  const daysAlive = (() => {
+    const ts = parseInt(localStorage.getItem("yieldling_adopted_at") ?? "0", 10);
+    if (!ts) return 1;
+    return Math.max(1, Math.floor((Date.now() - ts) / 86_400_000));
+  })();
   const [showToast, setShowToast] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
   const [sparkles, setSparkles] = useState([]);
   const [xpFloats, setXpFloats] = useState([]);
-  const [needs, setNeeds] = useState({ hunger: 72, mood: 88, energy: 55 });
+  const [needs, setNeeds] = useState(() => loadNeeds());
   const [activeTab, setActiveTab] = useState("nursery");
   const [hoodOpen, setHoodOpen] = useState(false);
-  const [currentApy, setCurrentApy] = useState(null);
-  const [opportunities, setOpportunities] = useState([]);
+  const [currentApy,  setCurrentApy]  = useState(null);
+  const [apyLabel,    setApyLabel]    = useState("Current APY");
+  const [opportunities,   setOpportunities]   = useState([]);   // fallback: public opps
+  const [positions,       setPositions]       = useState([]);   // real wallet positions
+  const [positionsLoaded, setPositionsLoaded] = useState(false);
   const [tapping, setTapping] = useState(null);      // "hunger"|"mood"|"energy"|null
   const [reminding, setReminding] = useState({});    // keys currently pulsing
+  const [tooltip, setTooltip] = useState(null);      // active tooltip text or null
   const petRef = useRef(null);
   const sparkleId = useRef(0);
   const xpId = useRef(0);
@@ -408,43 +513,96 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   const xpPct     = nextStage.threshold === stage.threshold ? 100
     : ((yieldEarned - stage.threshold) / (nextStage.threshold - stage.threshold)) * 100;
   const charImg    = CHAR_IMGS[character]?.[stage.stage - 1] ?? CHAR_IMGS.stabby[0];
-  const accentRgb  = character === "volty" ? "255,106,176" : "106,255,212";
-  const accentHex  = character === "volty" ? "#ff6ab0" : "#6affd4";
-  const healthPct  = petState === "ok" ? 85 : petState === "anxious" ? 44 : 20;
-  // Fetch live protocol opportunities — character-specific, poll every 30s
+  const accentRgb      = character === "volty" ? "255,106,176" : "106,255,212";
+  const accentHex      = character === "volty" ? "#ff6ab0" : "#6affd4";
+  const hasActiveDeposit = depositLoaded && deposited > 0;
+  const healthPct = petState === "anxious" ? 44
+                  : petState === "danger"  ? 20
+                  : hasActiveDeposit       ? 100
+                  : depositLoaded          ? 0     // loaded but no deposit
+                  : 85;                            // still loading — show neutral
+  // Persist needs to localStorage whenever they change; update lastVisit timestamp
   useEffect(() => {
-    const fetchOpps = async () => {
+    localStorage.setItem(NEEDS_KEY, JSON.stringify(needs));
+    localStorage.setItem(LAST_VISIT_KEY, String(Date.now()));
+  }, [needs]);
+
+  // Fetch actual wallet positions from getPositionDetails; poll every 60s.
+  // Falls back to public opportunities (character-specific) if no positions returned.
+  useEffect(() => {
+    const fn = character === "volty" ? getAggressiveOpportunities : getConservativeOpportunities;
+
+    const fetchRoutes = async () => {
+      // ── Primary: real positions for this wallet ───────────────────────────
+      if (walletAddress) {
+        try {
+          const details = await getPositionDetails(walletAddress, 8453);
+          if (details.length > 0) {
+            setPositions(details);
+            setPositionsLoaded(true);
+            return; // have real data — no need for fallback
+          }
+        } catch (err) {
+          console.warn("[Nursery] getPositionDetails failed, falling back:", err);
+        }
+      }
+      // ── Fallback: public top opportunities for this character ─────────────
       try {
-        const fn   = character === "volty" ? getAggressiveOpportunities : getConservativeOpportunities;
         const opps = await fn(8453);
         if (opps.length) setOpportunities(opps);
       } catch (err) {
-        console.error("[Nursery] fetchOpps failed:", err);
+        console.error("[Nursery] fetchOpps fallback failed:", err);
       }
+      setPositionsLoaded(true);
     };
-    fetchOpps();
-    const iv = setInterval(fetchOpps, 30_000);
-    return () => clearInterval(iv);
-  }, [character]);
 
-  // Fetch strategy APY — public read, no wallet needed, poll every 60s
+    fetchRoutes();
+    const iv = setInterval(fetchRoutes, 60_000);
+    return () => clearInterval(iv);
+  }, [character, walletAddress]);
+
+  // Fetch current APY — poll every 60s
+  // Primary: getDailyApyHistory(smartWalletAddress, "7D") → label "Current APY"
+  // Fallback: getStrategyApy(strategy, asset)             → label "Est. APY"
   useEffect(() => {
-    const strategy = character === "volty" ? "aggressive"  : "conservative";
-    const asset    = character === "volty" ? "WETH"        : "USDC";
+    const strategy = character === "volty" ? "aggressive" : "conservative";
+    const asset    = character === "volty" ? "WETH"       : "USDC";
+
     const fetchApy = async () => {
+      // ── Primary: smart wallet's own 7-day APY history ────────────────────
+      if (smartWalletAddress) {
+        try {
+          const result = await getDailyApyHistory(smartWalletAddress, "7D");
+          if (result !== null) {
+            const n = parseFloat(result);
+            if (isFinite(n) && n > 0) {
+              setCurrentApy(n);
+              setApyLabel("Current APY");
+              return; // success — no need for fallback
+            }
+          }
+        } catch (err) {
+          console.warn("[Nursery] getDailyApyHistory failed, falling back:", err);
+        }
+      }
+      // ── Fallback: public strategy APY (no wallet needed) ─────────────────
       try {
         const apy = await getStrategyApy(strategy, asset);
-        if (apy !== null) setCurrentApy(apy);
+        if (apy !== null) {
+          setCurrentApy(apy);
+          setApyLabel("Est. APY");
+        }
       } catch (err) {
-        console.error("[Nursery] getStrategyApy failed:", err);
+        console.error("[Nursery] getStrategyApy fallback failed:", err);
       }
     };
+
     fetchApy();
     const iv = setInterval(fetchApy, 60_000);
     return () => clearInterval(iv);
-  }, [character]);
+  }, [character, smartWalletAddress]);
 
-  // Fetch deposited principal — poll every 60s
+  // Fetch deposited principal — drives health bar; poll every 60s
   useEffect(() => {
     if (!walletAddress) return;
     const fetchDeposited = async () => {
@@ -453,6 +611,8 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         if (typeof val === "number" && isFinite(val) && val >= 0) setDeposited(val);
       } catch (err) {
         console.error("[Nursery] getPositions failed:", err);
+      } finally {
+        setDepositLoaded(true); // mark first fetch done regardless of result
       }
     };
     fetchDeposited();
@@ -483,15 +643,16 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     }
     setPrevStageName(stage.name);
   }, [stage.name]);
-  // deplete needs slowly
+  // Deplete needs every 30s using per-bar depletion rates (respects MIN_BAR floor)
   useEffect(() => {
+    const TICK_MS = 30_000;
     const iv = setInterval(() => {
       setNeeds(n => ({
-        hunger: Math.max(0, n.hunger - 0.3),
-        mood:   Math.max(0, n.mood   - 0.15),
-        energy: Math.max(0, n.energy - 0.2),
+        hunger: Math.max(MIN_BAR, n.hunger - DEPLETION_MS.hunger * TICK_MS),
+        mood:   Math.max(MIN_BAR, n.mood   - DEPLETION_MS.mood   * TICK_MS),
+        energy: Math.max(MIN_BAR, n.energy - DEPLETION_MS.energy * TICK_MS),
       }));
-    }, 800);
+    }, TICK_MS);
     return () => clearInterval(iv);
   }, []);
   // Pulse reminder every 30s on buttons whose need bar is below 40
@@ -499,7 +660,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     const iv = setInterval(() => {
       setNeeds(current => {
         const low = {};
-        ["hunger","mood","energy"].forEach(k => { if (current[k] < 40) low[k] = true; });
+        ["hunger","mood","energy"].forEach(k => { if (current[k] <= 20) low[k] = true; });
         if (Object.keys(low).length) {
           setReminding(low);
           setTimeout(() => setReminding({}), 3800); // 3 pulses × ~1.2s
@@ -531,7 +692,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     const cfg      = TAP_CFG[character] ?? TAP_CFG.stabby;
     const emojis   = { hunger: "🍖", mood: "✨", energy: "⚡" };
     const toastKey = { hunger: "Fed!", mood: "Played!", energy: "Rested!" };
-    const needGain = { hunger: 30, mood: 20, energy: 25 };
+    const needGain = { hunger: 50, mood: 50, energy: 50 };
 
     setTapping(type);
     try {
@@ -594,17 +755,27 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     setTimeout(() => { setPetState("ok"); toast("✅ Unwind complete. Principal safe!"); }, 5500);
   };
   const needConfig = [
-    { key: "hunger", icon: "🍖", label: "Feed",  color: "#ff6ab0" },
-    { key: "mood",   icon: "✨", label: "Play",  color: "#6affd4" },
-    { key: "energy", icon: "⚡", label: "Rest",  color: "#7c6aff" },
+    { key: "hunger", icon: "🍖", label: "Feed",  color: "#ff6ab0", tip: TIP_FEED },
+    { key: "mood",   icon: "✨", label: "Play",  color: "#6affd4", tip: TIP_PLAY },
+    { key: "energy", icon: "⚡", label: "Rest",  color: "#7c6aff", tip: TIP_REST },
   ];
-  const barColor = petState === "ok" ? "linear-gradient(90deg,#6affd4,#4af0b8)"
-                 : petState === "anxious" ? "linear-gradient(90deg,#ffd76a,#ffaa6a)"
-                 : "linear-gradient(90deg,#ff6a6a,#ff9a6a)";
+  const barColor = petState === "anxious"                  ? "linear-gradient(90deg,#ffd76a,#ffaa6a)"
+                 : petState === "danger"                   ? "linear-gradient(90deg,#ff6a6a,#ff9a6a)"
+                 : hasActiveDeposit                        ? "linear-gradient(90deg,#6affd4,#4af0b8)"
+                 : "rgba(90,96,128,.35)";         // no active deposit → grey
   return (
     <div style={{ background: "var(--bg)", minHeight: "100vh", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "90px 0 40px", overflowY: "auto" }}>
       <div className="stars" />
       <div className="phone">
+        {/* Tooltip overlay — tap backdrop or Dismiss to close */}
+        {tooltip && (
+          <div className="tip-overlay" onClick={() => setTooltip(null)}>
+            <div className="tip-card" onClick={e => e.stopPropagation()}>
+              <div className="tip-text">{tooltip}</div>
+              <button className="tip-dismiss" onClick={() => setTooltip(null)}>Got it</button>
+            </div>
+          </div>
+        )}
         {/* Toast */}
         {showToast && <div className="toast">{toastMsg}</div>}
         {/* Sparkles */}
@@ -626,7 +797,10 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
               <div className="topbar-level">{defaultName.toUpperCase()} · {stage.level}</div>
             </div>
           </div>
-          <div className="streak-pill">🔥 <span className="streak-count">{streak}</span></div>
+          <div className="streak-pill">
+            <div className="streak-top">🔥 <span className="streak-count">{daysAlive}</span></div>
+            <div className="streak-lbl">Days alive</div>
+          </div>
         </div>
         {/* Stat Cards */}
         <div className="stat-cards">
@@ -635,7 +809,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
             <div className="stat-val teal">${fmt(yieldEarned)}</div>
           </div>
           <div className="stat-card purple">
-            <div className="stat-lbl">ZyFAI Best Rate</div>
+            <div className="stat-lbl">{apyLabel}</div>
             <div className="stat-val purple">
               {currentApy !== null ? `${parseFloat(currentApy).toFixed(1)}%` : "—"}
             </div>
@@ -666,11 +840,20 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         {/* Status Bars */}
         <div className="bars-area">
           <div className="bar-row">
-            <div className="bar-left"><span className="bar-icon">❤️</span> Health</div>
+            <div className="bar-left">
+              <span className="bar-icon">❤️</span> Health
+              <button className="info-btn" onClick={() => setTooltip(TIP_HEALTH)}>ⓘ</button>
+            </div>
             <div className="bar-track">
               <div className="bar-fill" style={{ width: `${healthPct}%`, background: barColor }} />
             </div>
-            <div className="bar-pct" style={{ color: petState === "ok" ? "var(--teal)" : "var(--gold)" }}>{healthPct}%</div>
+            <div className="bar-pct" style={{ color:
+                petState === "anxious" ? "var(--gold)"
+              : petState === "danger"  ? "#ff6a6a"
+              : hasActiveDeposit       ? "var(--teal)"
+              : depositLoaded          ? "var(--dim)"
+              : "var(--teal)"
+            }}>{healthPct}%</div>
           </div>
           <div className="bar-row">
             <div className="bar-left"><span className="bar-icon">😊</span> Mood</div>
@@ -678,47 +861,71 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
               <div className="bar-fill" style={{ width: `${needs.mood}%`, background: "linear-gradient(90deg,var(--teal),#4af0b8)" }} />
             </div>
             <div className="bar-pct" style={{ color: "var(--teal)" }}>
-              {needs.mood < 30 ? "Low" : needs.mood < 60 ? "OK" : "Happy"}
+              {needs.mood <= 20 ? "Low" : needs.mood < 60 ? "OK" : "Happy"}
             </div>
           </div>
         </div>
         {/* Emotion Pill */}
         <div className="emotion-area">
-          <div className={`emotion-pill ${petState === "ok" ? "ep-ok" : petState === "anxious" ? "ep-warn" : "ep-bad"}`}>
-            {petState === "ok" ? "😊 Thriving" : petState === "anxious" ? "😰 ZyFAI rebalancing…" : "😵 Withdrawing funds…"}
+          <div className={`emotion-pill ${
+            petState === "anxious"                    ? "ep-warn"
+          : petState === "danger"                     ? "ep-bad"
+          : hasActiveDeposit                          ? "ep-ok"
+          : depositLoaded                             ? "ep-warn"
+          : "ep-ok"
+          }`}>
+            {petState === "anxious"  ? "😰 ZyFAI rebalancing…"
+           : petState === "danger"   ? "😵 Withdrawing funds…"
+           : hasActiveDeposit        ? "😊 Thriving"
+           : depositLoaded           ? "😴 Dormant — make a deposit to wake me up!"
+           : "😊 Thriving"}
           </div>
         </div>
         {/* Pet Name + XP */}
         <div className="pet-meta">
           <div className="pet-name-row">
             <div className="pet-name">{charName}</div>
-            <div className="pet-xp">{fmt(yieldEarned)} / {nextStage.threshold} XP</div>
+            <div className="pet-xp" style={{ display:"flex", alignItems:"center" }}>
+              {fmt(yieldEarned)} / {nextStage.threshold} XP
+              <button className="info-btn" onClick={() => setTooltip(TIP_XP)}>ⓘ</button>
+            </div>
           </div>
           <div className="xp-track">
             <div className="xp-fill" style={{ width: `${Math.min(xpPct, 100)}%`, background: `linear-gradient(90deg, var(--purple), ${accentHex})` }} />
           </div>
-          <div className="next-evo" style={{ color: accentHex }}>Next Evolution: {nextStage.name}</div>
+          <div className="next-evo" style={{ color: accentHex, display:"flex", alignItems:"center", justifyContent:"center", gap:"5px" }}>
+            Next Evolution: {nextStage.name}
+            <button className="info-btn" style={{ color: accentHex, opacity:.45 }} onClick={() => setTooltip(TIP_EVO)}>ⓘ</button>
+          </div>
         </div>
         {/* Needs */}
         <div className="needs">
-          {needConfig.map(({ key, icon, label, color }) => {
+          {needConfig.map(({ key, icon, label, color, tip }) => {
             const isThisTapping = tapping === key;
             const isDisabled    = tapping !== null;
-            const isUrgent      = needs[key] < 30 && !isDisabled;
+            const isUrgent      = needs[key] <= 20 && !isDisabled;
             const isReminding   = reminding[key] && !isDisabled;
             return (
               <button
                 key={key}
                 className={[
                   "need-btn",
-                  isUrgent    ? "urgent"  : "",
+                  isUrgent      ? "urgent"  : "",
                   isThisTapping ? "tapping" : "",
-                  isReminding ? "remind"  : "",
+                  isReminding   ? "remind"  : "",
                 ].filter(Boolean).join(" ")}
                 disabled={isDisabled}
                 onClick={() => handleNeed(key)}
                 style={{ position: "relative" }}
               >
+                {/* ⓘ — span not button to avoid invalid nesting */}
+                <span
+                  className="need-info"
+                  role="button"
+                  tabIndex={0}
+                  onClick={e => { e.stopPropagation(); setTooltip(tip); }}
+                  onKeyDown={e => e.key === "Enter" && (e.stopPropagation(), setTooltip(tip))}
+                >ⓘ</span>
                 {isThisTapping && <span className="need-spinner" />}
                 <div className="need-icon">{icon}</div>
                 <div className="need-label">{label}</div>
@@ -739,22 +946,31 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
             <span>🔧 Under the Hood</span>
             <span className={`hood-chevron ${hoodOpen ? "open" : ""}`}>▼</span>
           </button>
-          {hoodOpen && (
+          {hoodOpen && (() => {
+            // Decide which data set and label to show
+            const hasRealPositions = positions.length > 0;
+            const routeLabel = hasRealPositions ? "Top Active Routes" : "Suggested Routes";
+            const routeRows  = hasRealPositions ? positions : opportunities;
+            const showEmpty  = positionsLoaded && !hasRealPositions && routeRows.length === 0;
+            return (
             <div>
-              <div className="hood-section-lbl">Top Active Routes</div>
-              {opportunities.length > 0 ? opportunities.map((opp, i) => (
+              <div className="hood-section-lbl">{routeLabel}</div>
+              {showEmpty ? (
+                <div className="hood-protocol-row">
+                  <div className="hood-protocol-name" style={{ color: "var(--dim)", fontSize: 12 }}>
+                    No active positions yet — make a deposit to get started
+                  </div>
+                </div>
+              ) : routeRows.map((row, i) => (
                 <div className="hood-protocol-row" key={i}>
                   <div>
-                    <div className="hood-protocol-name">{opp.protocol}</div>
-                    {opp.token && <div className="hood-protocol-token">{opp.token}</div>}
+                    <div className="hood-protocol-name">
+                      {row.protocol}{row.token ? ` · ${row.token}` : ""}
+                    </div>
                   </div>
-                  <div className="hood-protocol-apy">{opp.apy}%</div>
+                  <div className="hood-protocol-apy">{row.apy === "—" ? "—" : `${row.apy}%`}</div>
                 </div>
-              )) : (
-                <div className="hood-protocol-row">
-                  <div className="hood-protocol-name" style={{ color: "var(--dim)" }}>Loading routes…</div>
-                </div>
-              )}
+              ))}
               <div className="hood-meta">
                 <div className="hood-cell">
                   <div className="hood-cell-lbl">Auto-Compound</div>
@@ -766,7 +982,8 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
                 </div>
               </div>
             </div>
-          )}
+            );
+          })()}
         </div>
         {/* Bottom Nav */}
         <div className="bottom-nav">

@@ -138,6 +138,43 @@ export async function getAggressiveOpportunities(chainId = 8453) {
 }
 
 /**
+ * Fetch individual active positions for a wallet as a structured array.
+ * Returns each protocol position the Smart Account is currently deployed in.
+ * No wallet connection required — public read-only call.
+ *
+ * @param {string} walletAddress
+ * @param {number} [chainId=8453]
+ * @returns {Array<{ protocol: string, token: string, apy: string, value: number }>}
+ */
+export async function getPositionDetails(walletAddress, chainId = 8453) {
+  console.log(`[ZyFAI] getPositionDetails — wallet: ${walletAddress}, chainId: ${chainId}`);
+  const sdk = createSdk();
+  const result = await sdk.getPositions(walletAddress, chainId);
+  console.log("[ZyFAI] getPositionDetails raw:", JSON.stringify(result, null, 2));
+
+  // Try every plausible array location in the response
+  const entries =
+    Array.isArray(result?.data?.positions) ? result.data.positions :
+    Array.isArray(result?.data)            ? result.data            :
+    Array.isArray(result?.positions)       ? result.positions       :
+    Array.isArray(result)                  ? result                 :
+    [];
+
+  return entries
+    .filter(p => (p.protocol ?? p.name ?? "").length > 0)
+    .map(p => ({
+      protocol: p.protocol ?? p.name ?? "Unknown",
+      token:    p.token    ?? p.asset ?? p.symbol ?? "",
+      apy: (() => {
+        const n = parseFloat(p.apy ?? p.APY ?? p.apyPercent ?? 0);
+        if (!isFinite(n)) return "—";
+        return n < 1 ? (n * 100).toFixed(2) : n.toFixed(2);
+      })(),
+      value: p.value ?? p.balance ?? p.amount ?? 0,
+    }));
+}
+
+/**
  * Fetch the current positions / total deposited value for a wallet.
  * No wallet connection required — public read-only call.
  *

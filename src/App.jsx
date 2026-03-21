@@ -209,6 +209,13 @@ const css = `
     color: var(--text); outline: none; transition: border-color .2s;
   }
   .amount-input:focus { border-color: var(--accent); }
+  .amount-input::placeholder { color: var(--dim); font-weight: 600; }
+  .amount-hint {
+    font-size: 12px; font-weight: 700; margin-top: 7px;
+    min-height: 18px; transition: opacity .2s;
+  }
+  .amount-hint.err  { color: var(--danger); }
+  .amount-hint.info { color: var(--dim); }
   .risk-grid { display: grid; grid-template-columns: repeat(3,1fr); gap: 10px; margin-bottom: 26px; }
   .risk-card {
     background: var(--bg); border: 2px solid var(--border);
@@ -223,16 +230,43 @@ const css = `
   .r-safe { color: var(--safe); }
   .r-turbo { color: var(--warn); }
   .r-max { color: var(--accent2); }
-  .proj-box {
-    background: var(--bg); border: 1px solid var(--border);
-    border-radius: 14px; padding: 18px; margin-bottom: 22px;
+  /* ── DETAILS PANEL ── */
+  .details-panel {
+    background: var(--surface2); border: 1px solid var(--border);
+    border-radius: 16px; margin-bottom: 22px; overflow: hidden;
+    animation: detailsIn .2s ease-out;
   }
-  .proj-row {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 5px 0; font-size: 14px;
+  @keyframes detailsIn {
+    from { opacity: 0; transform: translateY(-6px); }
+    to   { opacity: 1; transform: translateY(0); }
   }
-  .proj-key { color: var(--dim); font-weight: 600; }
-  .proj-val { font-weight: 800; }
+  .details-title {
+    font-size: 10px; font-weight: 800; color: var(--dim);
+    text-transform: uppercase; letter-spacing: 2px;
+    padding: 13px 16px 11px;
+  }
+  .details-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 13px 16px; border-top: 1px solid var(--border);
+    gap: 12px;
+  }
+  .details-lbl {
+    font-size: 13px; font-weight: 600; color: var(--dim);
+    flex-shrink: 0;
+  }
+  .details-val {
+    display: flex; align-items: center; gap: 5px;
+    font-size: 13px; font-weight: 800; color: var(--text);
+    font-family: var(--mono); text-align: right;
+  }
+  .details-info {
+    font-size: 12px; color: var(--dim); opacity: .45;
+    cursor: default; user-select: none; flex-shrink: 0;
+  }
+  .c-green { color: var(--safe); }
+  .c-purple { color: var(--accent); }
+  .c-yellow { color: var(--warn); }
+  .c-pink { color: var(--accent2); }
   .c-green { color: var(--safe); }
   .c-purple { color: var(--accent); }
   .c-yellow { color: var(--warn); }
@@ -418,11 +452,12 @@ const css = `
   }
   .char-select-inner h2 { font-size: 26px; font-weight: 900; margin-bottom: 6px; }
   .char-select-inner > p { color: var(--dim); font-size: 14px; font-weight: 600; margin-bottom: 28px; }
-  .char-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 26px; }
+  .char-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 26px; align-items: stretch; }
   .char-card {
     background: var(--bg); border: 2px solid var(--border);
-    border-radius: 20px; padding: 24px 14px 18px; text-align: center;
+    border-radius: 20px; padding: 24px 14px 22px; text-align: center;
     cursor: pointer; transition: all .25s; position: relative;
+    display: flex; flex-direction: column; align-items: center;
   }
   .char-card:hover { transform: translateY(-3px); }
   .char-card.sel-teal {
@@ -455,11 +490,13 @@ const css = `
   }
   .char-badge.teal { background: rgba(106,255,212,.12); border: 1px solid rgba(106,255,212,.3); color: var(--accent3); }
   .char-badge.pink { background: rgba(255,106,176,.12); border: 1px solid rgba(255,106,176,.3); color: var(--accent2); }
-  .char-desc { font-size: 11px; color: var(--dim); font-weight: 600; line-height: 1.5; margin-bottom: 16px; }
+  .char-desc { font-size: 11px; color: var(--dim); font-weight: 600; line-height: 1.5; margin-bottom: 0; }
   /* evolution strip inside char card */
   .char-evo-strip {
     border-top: 1px solid var(--border);
-    padding-top: 14px; margin-top: 4px;
+    padding-top: 14px; padding-bottom: 2px;
+    margin-top: auto; /* flex: push strip to bottom so both cards are equal height */
+    width: 100%;
   }
   .char-evo-row {
     display: flex; align-items: center; justify-content: center; gap: 2px;
@@ -538,6 +575,16 @@ const css = `
   /* yield tick */
   @keyframes ytick { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
   .ytick { animation: ytick .25s ease-out; }
+  /* app-level toast */
+  @keyframes appToastIn { from{opacity:0;transform:translateX(-50%) translateY(-10px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
+  .app-toast {
+    position: fixed; top: 80px; left: 50%; transform: translateX(-50%);
+    background: var(--surface2); border: 1px solid var(--accent3);
+    border-radius: 14px; padding: 10px 22px;
+    font-size: 13px; font-weight: 800; color: var(--accent3);
+    white-space: nowrap; z-index: 9999; pointer-events: none;
+    animation: appToastIn .3s ease-out;
+  }
   /* ── FUND WALLET ── */
   .fund-wrap {
     display: flex; align-items: center; justify-content: center;
@@ -850,9 +897,23 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
   const [funded,        setFunded]        = useState(!isEmbedded);
   const [selectedChar,  setSelectedChar]  = useState("stabby");
   const [petName,       setPetName]       = useState(() => localStorage.getItem("yieldling_pet_name") ?? "");
-  const [amount,        setAmount]        = useState(1000);
+  const [amount,        setAmount]        = useState(""); // raw string input, intentionally empty
   const [loading,       setLoading]       = useState(false);
   const [error,         setError]         = useState(null);
+
+  // Per-character deposit config
+  const DEPOSIT_CFG = {
+    stabby: { min: 10,    placeholder: "100",  minLabel: "Minimum deposit is $10 USDC"   },
+    volty:  { min: 0.001, placeholder: "0.01", minLabel: "Minimum deposit is 0.001 WETH" },
+  };
+  const cfg        = DEPOSIT_CFG[selectedChar];
+  const amountNum  = parseFloat(amount);
+  const amountEmpty   = amount === "" || isNaN(amountNum) || amountNum <= 0;
+  const amountTooLow  = !amountEmpty && amountNum < cfg.min;
+  const amountValid   = !amountEmpty && !amountTooLow;
+
+  // Clear amount when character switches — units are incompatible
+  useEffect(() => { setAmount(""); }, [selectedChar]);
 
   // ── Live APY per character ───────────────────────────────────────────────
   const [apys,       setApys]       = useState({ stabby: null, volty: null });
@@ -907,10 +968,16 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
   const handleAdopt = async () => {
     setLoading(true); setError(null);
     try {
-      const result = await depositToZyfai(amount, walletAddress, asset);
+      const result = await depositToZyfai(amountNum, walletAddress, asset);
       setSmartWalletAddress(result.smartWallet);
       setCharacter(selectedChar);
-      localStorage.setItem("yieldling_pet_name", petName.trim()); // persist custom name
+      // Persist all adoption state
+      localStorage.setItem("yieldling_pet_name",    petName.trim());
+      localStorage.setItem("yieldling_adopted_at",  String(Date.now()));
+      localStorage.setItem("yieldling_adopted",     "true");
+      localStorage.setItem("yieldling_wallet",      walletAddress);
+      localStorage.setItem("yieldling_character",   selectedChar);
+      localStorage.setItem("yieldling_smart_wallet", result.smartWallet);
       bumpYieldlings(); // increment the persistent Yieldlings counter
       setScreen("nursery");
     } catch (err) {
@@ -923,17 +990,17 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
 
   const chars = [
     { id: "stabby", accentCls: "teal", asset: "USDC",
-      personality: "Calm & stable yields", apyFallback: "conservative APY" },
+      personality: "Calm & stable yields", apyFallback: "7.2%" },
     { id: "volty",  accentCls: "pink",  asset: "WETH",
-      personality: "Electric & high energy", apyFallback: "aggressive APY" },
+      personality: "ETH-native yield, steady growth", apyFallback: "12.4%" },
   ];
 
-  // Projection figures using real APY (or null while loading/failed)
-  const monthlyYield = (selectedApy !== null && amount > 0)
-    ? amount * (selectedApy / 100) / 12
+  // Projection figures — only when amount is valid and APY is loaded
+  const monthlyYield = (selectedApy !== null && amountValid)
+    ? amountNum * (selectedApy / 100) / 12
     : null;
-  const yearlyYield  = (selectedApy !== null && amount > 0)
-    ? amount * (selectedApy / 100)
+  const yearlyYield  = (selectedApy !== null && amountValid)
+    ? amountNum * (selectedApy / 100)
     : null;
 
   return (
@@ -955,14 +1022,7 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
                   style={{ width: 140, height: 140 }} />
                 <div className={`char-name ${c.accentCls}`}>{label}</div>
                 <div className={`char-badge ${c.accentCls}`}>{c.asset}</div>
-                {/* Live APY badge */}
-                <div className={`char-apy-badge ${c.accentCls}`}>
-                  {apyLoading
-                    ? <span className="apy-skeleton" />
-                    : apy !== null
-                      ? `${apy.toFixed(1)}% APY`
-                      : c.apyFallback}
-                </div>
+
                 <div className="char-desc">{c.personality}</div>
                 {/* Evolution preview strip */}
                 <div className="char-evo-strip">
@@ -1010,27 +1070,46 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
         </div>
         <div className="char-amount">
           <label className="field-label">Deposit Amount ({asset})</label>
-          <input className="amount-input" type="number" value={amount}
-            onChange={e => setAmount(parseFloat(e.target.value) || 0)} />
+          <input
+            className="amount-input"
+            type="number"
+            value={amount}
+            placeholder={cfg.placeholder}
+            min={cfg.min}
+            step="any"
+            onChange={e => setAmount(e.target.value)}
+          />
+          {amountTooLow && (
+            <div className="amount-hint err">{cfg.minLabel}</div>
+          )}
         </div>
-        {/* Projection panel — only shown when we have a real APY and a non-zero amount */}
-        {monthlyYield !== null && (
-          <div className="proj-box">
-            <div className="proj-row">
-              <span className="proj-key">Est. monthly yield</span>
-              <span className={`proj-val ${accentCls === "teal" ? "c-green" : "c-pink"}`}>
-                +{fmt(monthlyYield)} {asset}
+        {/* Details panel — only shown when amount is valid */}
+        {amountValid && (
+          <div className="details-panel">
+            <div className="details-title">Details</div>
+
+            <div className="details-row">
+              <span className="details-lbl">Average APY</span>
+              <span className="details-val">
+                {selectedApy !== null ? `${selectedApy.toFixed(1)}%` : "—"}
+                <span className="details-info">ⓘ</span>
               </span>
             </div>
-            <div className="proj-row">
-              <span className="proj-key">Est. yearly yield</span>
-              <span className={`proj-val ${accentCls === "teal" ? "c-green" : "c-pink"}`}>
-                +{fmt(yearlyYield)} {asset}
+
+            <div className="details-row">
+              <span className="details-lbl">Projected monthly earnings</span>
+              <span className="details-val">
+                {monthlyYield !== null ? `$${fmt(monthlyYield)} / mo` : "—"}
+                <span className="details-info">ⓘ</span>
               </span>
             </div>
-            <div className="proj-row">
-              <span className="proj-key">Current APY</span>
-              <span className="proj-val c-purple">{selectedApy.toFixed(1)}%</span>
+
+            <div className="details-row">
+              <span className="details-lbl">Projected yearly earnings</span>
+              <span className="details-val">
+                {yearlyYield !== null ? `$${fmt(yearlyYield)} / yr` : "—"}
+                <span className="details-info">ⓘ</span>
+              </span>
             </div>
           </div>
         )}
@@ -1039,8 +1118,15 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
             {error}
           </p>
         )}
-        <button className={`char-adopt-btn ${accentCls}`} onClick={handleAdopt} disabled={loading}
-          style={{ opacity: loading ? 0.7 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
+        <button
+          className={`char-adopt-btn ${accentCls}`}
+          onClick={handleAdopt}
+          disabled={loading || !amountValid}
+          style={{
+            opacity: (loading || !amountValid) ? 0.45 : 1,
+            cursor:  (loading || !amountValid) ? "not-allowed" : "pointer",
+          }}
+        >
           {loading ? "⏳ Depositing…" : `Adopt ${selectedChar === "stabby" ? "Stabby" : "Volty"} →`}
         </button>
       </div>
@@ -1050,16 +1136,56 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
   const { wallets } = useWallets();
-  // Single source of truth for wallet address — works for embedded and injected
   const walletAddress = wallets?.[0]?.address ?? null;
 
-  const [screen,             setScreen]             = useState("landing");
-  const [smartWalletAddress, setSmartWalletAddress] = useState(null);
-  const [character,          setCharacter]          = useState("stabby");
+  const [screen,             setScreenRaw]          = useState("landing");
+  const [smartWalletAddress, setSmartWalletAddress] = useState(
+    () => localStorage.getItem("yieldling_smart_wallet") ?? null
+  );
+  const [character, setCharacter] = useState(
+    () => localStorage.getItem("yieldling_character") ?? "stabby"
+  );
+  const [appToast, setAppToast] = useState(null);
+
+  // Helper — show a teal toast for ~3 s
+  const showAppToast = (msg) => {
+    setAppToast(msg);
+    setTimeout(() => setAppToast(null), 3200);
+  };
+
+  // Guarded navigation — blocks Nursery access for non-adopted wallets
+  const setScreen = (target) => {
+    if (target === "nursery") {
+      const adopted     = localStorage.getItem("yieldling_adopted") === "true";
+      const savedWallet = localStorage.getItem("yieldling_wallet");
+      if (!adopted || savedWallet !== walletAddress) {
+        showAppToast("🥚 Adopt a Yieldling first to access the Nursery");
+        setScreenRaw("adopt");
+        return;
+      }
+    }
+    setScreenRaw(target);
+  };
+
+  // Auto-route a returning adopted wallet straight to the Nursery
+  useEffect(() => {
+    if (!walletAddress) return;
+    const adopted     = localStorage.getItem("yieldling_adopted") === "true";
+    const savedWallet = localStorage.getItem("yieldling_wallet");
+    if (adopted && savedWallet === walletAddress) {
+      // Restore character + smart wallet from storage (may already be initialised)
+      const savedChar        = localStorage.getItem("yieldling_character");
+      const savedSmartWallet = localStorage.getItem("yieldling_smart_wallet");
+      if (savedChar)        setCharacter(savedChar);
+      if (savedSmartWallet) setSmartWalletAddress(savedSmartWallet);
+      setScreenRaw("nursery");
+    }
+  }, [walletAddress]);
 
   return (
     <>
       <Stars />
+      {appToast && <div className="app-toast">{appToast}</div>}
       <Nav screen={screen} setScreen={setScreen} />
       {screen === "landing"  && <Landing setScreen={setScreen} />}
       {screen === "adopt"    && (
