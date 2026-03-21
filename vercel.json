@@ -7,6 +7,10 @@
       "destination": "https://api.zyf.ai/api/v1/:path*"
     },
     {
+      "source": "/api/zyfai-data/:path*",
+      "destination": "https://defiapi.zyf.ai/api/v2/:path*"
+    },
+    {
       "source": "/((?!api/).*)",
       "destination": "/index.html"
     }

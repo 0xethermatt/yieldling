@@ -24,15 +24,17 @@ function createSdk() {
   const sdk = new ZyfaiSDK({ apiKey });
 
   // ── CORS proxy ───────────────────────────────────────────────────────────
-  // The ZyFAI execution API (api.zyf.ai/api/v1) doesn't send CORS headers,
-  // so browser requests are blocked.  We redirect the SDK's internal axios
-  // client to our Vercel serverless proxy (/api/zyfai/…) which forwards the
-  // calls server-to-server, bypassing CORS entirely.
-  // The data client (defiapi.zyf.ai) handles CORS fine — leave it alone.
+  // Both api.zyf.ai (execution) and defiapi.zyf.ai (data) use origin-based
+  // CORS whitelisting — yieldling.vercel.app is not whitelisted, so every
+  // browser request is blocked.  Redirect both SDK axios clients to our
+  // Vercel edge rewrites which forward the calls server-to-server.
   if (typeof window !== 'undefined') {
-    const proxyBase = `${window.location.origin}/api/zyfai`;
-    sdk.httpClient.client.defaults.baseURL = proxyBase;
-    console.log('[ZyFAI] createSdk — execution API rerouted to:', proxyBase);
+    const origin       = window.location.origin;
+    const execProxy    = `${origin}/api/zyfai`;
+    const dataProxy    = `${origin}/api/zyfai-data`;
+    sdk.httpClient.client.defaults.baseURL     = execProxy;   // api.zyf.ai/api/v1
+    sdk.httpClient.dataClient.defaults.baseURL = dataProxy;   // defiapi.zyf.ai/api/v2
+    console.log('[ZyFAI] createSdk — exec proxy:', execProxy, '| data proxy:', dataProxy);
   }
 
   return sdk;
@@ -253,50 +255,46 @@ export async function getPositions(walletAddress, chainId = 8453) {
   // SDK wraps data in result.portfolio (shape: { totalBalance, totalBalanceUsdc, positions, ... })
   const p = result?.portfolio;
 
-  // Sum an array of positions
+  // Extract deployed-positions total (funds actively in yield protocols)
+  let deployedTotal = 0;
   if (Array.isArray(p?.positions) && p.positions.length > 0) {
-    const total = p.positions.reduce((s, pos) => s + (pos.value ?? pos.balance ?? pos.amount ?? pos.valueUsdc ?? 0), 0);
-    if (total > 0) return total;
+    deployedTotal = p.positions.reduce(
+      (s, pos) => s + (pos.value ?? pos.balance ?? pos.amount ?? pos.valueUsdc ?? 0), 0
+    );
+  }
+  if (deployedTotal === 0) {
+    const scalar =
+      p?.totalBalanceUsdc ??
+      p?.totalBalance      ??
+      p?.totalValue        ??
+      p?.total             ??
+      result?.data?.total      ??
+      result?.data?.totalValue ??
+      result?.total            ??
+      result?.totalValue       ??
+      result?.value            ??
+      null;
+    if (typeof scalar === "number" && isFinite(scalar)) deployedTotal = scalar;
   }
 
-  // Scalar total fields (portfolio level)
-  const scalar =
-    p?.totalBalanceUsdc ??
-    p?.totalBalance      ??
-    p?.totalValue        ??
-    p?.total             ??
-    // Legacy / alternative shapes
-    result?.data?.total      ??
-    result?.data?.totalValue ??
-    result?.total            ??
-    result?.totalValue       ??
-    result?.value            ??
-    (Array.isArray(result?.data)
-      ? result.data.reduce((s, pos) => s + (pos.value ?? pos.balance ?? pos.amount ?? 0), 0)
-      : null);
-
-  if (typeof scalar === "number" && isFinite(scalar) && scalar > 0) return scalar;
-
-  // ── Fallback: read the Safe's on-chain token balance ─────────────────────
-  // ZyFAI may not have allocated funds to a strategy yet right after deposit.
-  // The safe address lives in result.portfolio?.safeAddress or we resolve it
-  // via getSmartWalletByEOA (same call the SDK already made internally).
+  // ── Also add the Safe's on-chain pending balance ─────────────────────────
+  // Funds sitting in the Safe (not yet deployed to a strategy) are real
+  // deposited value — sum them with the deployed total.
   try {
-    const safeInfo  = await sdk.getSmartWalletByEOA(walletAddress);
-    const safeAddr  = safeInfo?.smartWallet;
-    console.log("[ZyFAI] getPositions safe fallback — safeAddr:", safeAddr);
+    const safeInfo = await sdk.getSmartWalletByEOA(walletAddress);
+    const safeAddr = safeInfo?.smartWallet;
+    console.log("[ZyFAI] getPositions safeAddr:", safeAddr, "deployedTotal:", deployedTotal);
     if (safeAddr) {
-      // Try USDC first, then WETH
-      const usdc = await getSafeBalance(safeAddr, "USDC");
-      if (usdc > 0) { console.log("[ZyFAI] getPositions safe fallback USDC:", usdc); return usdc; }
-      const weth = await getSafeBalance(safeAddr, "WETH");
-      if (weth > 0) { console.log("[ZyFAI] getPositions safe fallback WETH:", weth); return weth; }
+      const usdcBal = await getSafeBalance(safeAddr, "USDC");
+      const wethBal = await getSafeBalance(safeAddr, "WETH");
+      console.log("[ZyFAI] getPositions safe balance — USDC:", usdcBal, "WETH:", wethBal);
+      return deployedTotal + usdcBal + wethBal;
     }
   } catch (e) {
-    console.warn("[ZyFAI] getPositions safe fallback failed:", e.message);
+    console.warn("[ZyFAI] getPositions safe balance check failed:", e.message);
   }
 
-  return 0;
+  return deployedTotal;
 }
 
 /**
@@ -459,8 +457,10 @@ export async function getStrategyApy(strategy, asset) {
     console.warn(`[ZyFAI] getStrategyApy SDK failed — falling back to REST:`, err?.message ?? err);
   }
 
-  // ── Fallback: direct REST v2 endpoint ─────────────────────────────────────
-  const url = `https://api.zyf.ai/api/v2/apy-per-strategy?strategy=${strategy}&tokenSymbol=${asset}&days=7`;
+  // ── Fallback: direct REST endpoint on defiapi ────────────────────────────
+  // SDK converts "conservative" → "safe", "aggressive" → "degen"
+  const strategyShort = strategy === "aggressive" ? "degen" : "safe";
+  const url = `https://defiapi.zyf.ai/api/v2/rebalance/rebalance-info?strategy=${strategyShort}&chainId=8453&tokenSymbol=${asset}&days=7`;
   console.log(`[ZyFAI] getStrategyApy REST fallback: ${url}`);
   const res  = await fetch(url);
   const data = await res.json();

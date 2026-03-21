@@ -715,30 +715,15 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
 
     setTapping(type);
     try {
-      // Ensure session key exists before first tap this session
-      if (walletAddress && !sessionKeyReady.current) {
-        const provider = await getProvider();
-        await ensureSessionKey(walletAddress, provider);
-        sessionKeyReady.current = true;
-      }
-
-      // On-chain deposit
+      // On-chain deposit — depositToZyfai already handles session key creation
+      // internally (Step 4), so no separate ensureSessionKey call needed here.
       if (walletAddress) {
         const provider = await getProvider();
-        const depositResult = await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider);
-        // Optimistically update deposited balance — ZyFAI may take time to allocate
-        // to strategies, so also check Safe balance directly for immediate feedback.
-        if (smartWalletAddress || depositResult?.smartWallet) {
-          const safe = smartWalletAddress || depositResult?.smartWallet;
-          try {
-            const safeVal = await getSafeBalance(safe, cfg.asset);
-            setDeposited(safeVal > 0 ? safeVal : prev => prev + cfg.amount);
-          } catch {
-            setDeposited(prev => prev + cfg.amount);
-          }
-        } else {
-          setDeposited(prev => prev + cfg.amount);
-        }
+        await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider);
+        // Always add to existing deposited total — previous deposits may be in
+        // ZyFAI strategies (not in the Safe) so reading safeBalance would only
+        // return the latest amount, not the cumulative total.
+        setDeposited(prev => prev + cfg.amount);
       }
 
       // Refresh yield counter from chain
