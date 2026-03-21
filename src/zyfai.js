@@ -201,8 +201,8 @@ export async function getAggressiveOpportunities(chainId = 8453) {
 
 /**
  * Fetch individual active positions for a wallet as a structured array.
- * Returns each protocol position the Smart Account is currently deployed in.
- * No wallet connection required — public read-only call.
+ * Uses getDailyApyHistory which is the only SDK endpoint that returns
+ * actual position data (sdk.getPositions always returns portfolio:{}).
  *
  * @param {string} walletAddress
  * @param {number} [chainId=8453]
@@ -210,136 +210,101 @@ export async function getAggressiveOpportunities(chainId = 8453) {
  * @returns {Array<{ protocol: string, token: string, apy: string, value: number }>}
  */
 export async function getPositionDetails(walletAddress, chainId = 8453, safeAddress = null) {
-  console.log(`[ZyFAI] getPositionDetails — wallet: ${walletAddress}, safe: ${safeAddress}, chainId: ${chainId}`);
+  const queryAddr = safeAddress ?? walletAddress;
+  console.log(`[ZyFAI] getPositionDetails — querying with: ${queryAddr}`);
   const sdk = createSdk();
 
-  // Resolve Safe address (positions live on the Safe, not the EOA)
-  let resolvedSafe = safeAddress;
-  if (!resolvedSafe) {
-    try {
-      const safeInfo = await sdk.getSmartWalletByEOA(walletAddress);
-      resolvedSafe   = safeInfo?.agent ?? safeInfo?.smartWallet ?? safeInfo?.address;
-    } catch (e) {
-      console.warn("[ZyFAI] getPositionDetails getSmartWalletByEOA failed:", e.message);
-    }
-  }
+  try {
+    const result = await sdk.getDailyApyHistory(queryAddr, "7D");
+    console.log("[ZyFAI] getPositionDetails getDailyApyHistory raw:", JSON.stringify(result, null, 2));
 
-  const queryAddr = resolvedSafe ?? walletAddress;
-  console.log(`[ZyFAI] getPositionDetails querying sdk.getPositions with: ${queryAddr}`);
-  const result = await sdk.getPositions(queryAddr, chainId);
-  console.log("[ZyFAI] getPositionDetails raw:", JSON.stringify(result, null, 2));
+    const historyObj = result?.history;
+    if (!historyObj || typeof historyObj !== "object") return [];
 
-  // SDK wraps data in result.portfolio; try every plausible array location
-  const entries =
-    Array.isArray(result?.portfolio?.positions) ? result.portfolio.positions :
-    Array.isArray(result?.portfolio)            ? result.portfolio            :
-    Array.isArray(result?.data?.positions)      ? result.data.positions      :
-    Array.isArray(result?.data)                 ? result.data                :
-    Array.isArray(result?.positions)            ? result.positions           :
-    Array.isArray(result)                       ? result                     :
-    [];
+    // Sort dates descending, take the most recent day
+    const dates = Object.keys(historyObj).sort().reverse();
+    if (!dates.length) return [];
 
-  // Actual API field names: protocol_name, token_symbol, pool, pool_apy, underlyingAmount
-  return entries
-    .filter(p => (p.protocol_name ?? p.protocol ?? p.name ?? "").length > 0)
-    .map(p => {
-      const sym      = p.token_symbol ?? p.token ?? p.asset ?? p.symbol ?? "USDC";
-      const decimals = sym === "WETH" ? 1e18 : 1e6;
-      const rawAmt   = p.underlyingAmount ?? p.value ?? p.balance ?? "0";
-      const value    = typeof rawAmt === "string" && rawAmt.startsWith("0x")
-        ? Number(BigInt(rawAmt)) / decimals
-        : Number(rawAmt) / decimals;
-      const apyRaw   = p.pool_apy ?? p.apy ?? p.APY ?? p.apyPercent ?? 0;
-      const apyN     = parseFloat(apyRaw);
-      // Include pool name in the protocol label: "Morpho · HighYield Clearstar USDC"
-      const poolSuffix = p.pool ? ` · ${p.pool}` : "";
+    const latestDay = historyObj[dates[0]];
+    const positions = latestDay?.positions;
+    if (!Array.isArray(positions) || !positions.length) return [];
+
+    // final_weighted_apy includes ZyFAI fee + Merkl rewards — best number to show per token
+    const finalApy = latestDay?.final_weighted_apy ?? {};
+
+    return positions.map(pos => {
+      const sym    = pos.tokenSymbol ?? pos.token ?? "USDC";
+      const poolSuffix = pos.pool ? ` · ${pos.pool}` : "";
+      // Use position-level pool APY; fall back to token-level weighted APY
+      const apyRaw = pos.apy ?? finalApy[sym] ?? 0;
+      const apyN   = parseFloat(apyRaw);
       return {
-        protocol: `${p.protocol_name ?? p.protocol ?? p.name ?? "Unknown"}${poolSuffix}`,
+        protocol: `${pos.protocol ?? "Unknown"}${poolSuffix}`,
         token:    sym,
-        apy:      !isFinite(apyN) ? "—" : (apyN < 1 ? (apyN * 100).toFixed(2) : apyN.toFixed(2)),
-        value:    isFinite(value) ? value : 0,
+        apy:      !isFinite(apyN) ? "—" : apyN.toFixed(2),
+        value:    isFinite(pos.balance) ? pos.balance : 0,
       };
     });
+  } catch (e) {
+    console.warn("[ZyFAI] getPositionDetails failed:", e.message);
+    return [];
+  }
 }
 
 /**
- * Fetch the current positions / total deposited value for a wallet.
- * No wallet connection required — public read-only call.
+ * Fetch the total deposited value for a wallet.
  *
- * @param {string} walletAddress      - EOA wallet address
+ * sdk.getPositions() always returns portfolio:{} without an authenticated session,
+ * so we use getDailyApyHistory which works with just an API key and returns
+ * per-position balance snapshots from the previous midnight.
+ *
+ * We also add the on-chain Safe USDC balance (funds sitting in the Safe
+ * that haven't been allocated to a yield strategy yet).
+ *
+ * @param {string} walletAddress      - EOA wallet address (fallback query address)
  * @param {number} [chainId=8453]
- * @param {string} [safeAddress=null] - Pre-resolved Safe/smart wallet address (avoids extra lookup)
+ * @param {string} [safeAddress=null] - Pre-resolved Safe/smart wallet address
  * @returns {number} Total deposited value in USD, or 0 on failure
  */
 export async function getPositions(walletAddress, chainId = 8453, safeAddress = null) {
-  console.log(`[ZyFAI] getPositions — wallet: ${walletAddress}, safeAddress: ${safeAddress}, chainId: ${chainId}`);
+  const queryAddr = safeAddress ?? walletAddress;
+  console.log(`[ZyFAI] getPositions — queryAddr: ${queryAddr}`);
   const sdk = createSdk();
 
-  // ── Resolve Safe address ──────────────────────────────────────────────────
-  // ZyFAI positions live on the Safe (smart wallet), not the EOA.
-  // If the caller already knows the safe address, use it directly.
-  let resolvedSafe = safeAddress;
-  if (!resolvedSafe) {
-    try {
-      const safeInfo   = await sdk.getSmartWalletByEOA(walletAddress);
-      resolvedSafe     = safeInfo?.agent ?? safeInfo?.smartWallet ?? safeInfo?.address;
-      console.log("[ZyFAI] getPositions resolved Safe via getSmartWalletByEOA:", resolvedSafe, "raw:", JSON.stringify(safeInfo));
-    } catch (e) {
-      console.warn("[ZyFAI] getPositions getSmartWalletByEOA failed:", e.message);
-    }
-  }
-
-  // Query positions using the Safe address (holds the actual DeFi positions)
-  const queryAddr = resolvedSafe ?? walletAddress;
-  console.log(`[ZyFAI] getPositions querying sdk.getPositions with: ${queryAddr}`);
-  const result = await sdk.getPositions(queryAddr, chainId);
-  console.log("[ZyFAI] getPositions raw:", JSON.stringify(result, null, 2));
-
-  // SDK wraps data in result.portfolio (shape: { totalBalance, totalBalanceUsdc, positions, ... })
-  const p = result?.portfolio;
-
-  // Extract deployed-positions total (funds actively in yield protocols)
-  // Actual API response shape: positions[].underlyingAmount = "20000184" (USDC 6 decimals)
+  // ── Primary: sum balances from daily APY history snapshot ────────────────
+  // getDailyApyHistory returns positions[].balance (USD, float) for the most
+  // recent daily snapshot (taken at midnight UTC). This lags real-time by up
+  // to 24 h but is the only unauth'd endpoint that returns allocated balances.
   let deployedTotal = 0;
-  if (Array.isArray(p?.positions) && p.positions.length > 0) {
-    deployedTotal = p.positions.reduce((s, pos) => {
-      const sym      = pos.token_symbol ?? pos.symbol ?? pos.token ?? "USDC";
-      const decimals = sym === "WETH" ? 1e18 : 1e6;
-      const raw      = pos.underlyingAmount ?? pos.value ?? pos.balance ?? "0";
-      // underlyingAmount may be a decimal string ("20000184") or hex ("0x1312db7")
-      const parsed   = typeof raw === "string" && raw.startsWith("0x")
-        ? Number(BigInt(raw)) / decimals
-        : Number(raw) / decimals;
-      return s + (isFinite(parsed) ? parsed : 0);
-    }, 0);
-    console.log("[ZyFAI] getPositions deployedTotal from positions:", deployedTotal);
-  }
-  if (deployedTotal === 0) {
-    const scalar =
-      p?.totalBalanceUsdc ??
-      p?.totalBalance      ??
-      p?.totalValue        ??
-      p?.total             ??
-      result?.data?.total      ??
-      result?.data?.totalValue ??
-      result?.total            ??
-      result?.totalValue       ??
-      result?.value            ??
-      null;
-    if (typeof scalar === "number" && isFinite(scalar)) deployedTotal = scalar;
+  try {
+    const result = await sdk.getDailyApyHistory(queryAddr, "7D");
+    const historyObj = result?.history;
+    if (historyObj && typeof historyObj === "object") {
+      const dates = Object.keys(historyObj).sort().reverse();
+      if (dates.length > 0) {
+        const latestDay = historyObj[dates[0]];
+        const positions = latestDay?.positions ?? [];
+        deployedTotal = positions.reduce((s, pos) => {
+          const bal = pos.balance;
+          return s + (typeof bal === "number" && isFinite(bal) ? bal : 0);
+        }, 0);
+        console.log(`[ZyFAI] getPositions snapshot (${dates[0]}): deployedTotal=${deployedTotal}`, positions);
+      }
+    }
+  } catch (e) {
+    console.warn("[ZyFAI] getPositions getDailyApyHistory failed:", e.message);
   }
 
-  // ── Also add the Safe's on-chain pending balance ─────────────────────────
-  // Funds sitting in the Safe (not yet deployed to a strategy) are real
-  // deposited value — sum them with the deployed total.
-  if (resolvedSafe) {
+  // ── Add Safe's on-chain pending balance ──────────────────────────────────
+  // Funds sitting in the Safe USDC balance are not yet in a yield protocol
+  // (they were just topped up). Add them on top of the snapshot balance.
+  if (safeAddress) {
     try {
-      const usdcBal = await getSafeBalance(resolvedSafe, "USDC");
-      const wethBal = await getSafeBalance(resolvedSafe, "WETH");
-      console.log("[ZyFAI] getPositions safe balance — USDC:", usdcBal, "WETH:", wethBal, "deployed:", deployedTotal);
-      return deployedTotal + usdcBal + wethBal;
+      const usdcBal = await getSafeBalance(safeAddress, "USDC");
+      console.log(`[ZyFAI] getPositions safe USDC balance: ${usdcBal}, deployed: ${deployedTotal}`);
+      return deployedTotal + usdcBal;
     } catch (e) {
-      console.warn("[ZyFAI] getPositions safe balance check failed:", e.message);
+      console.warn("[ZyFAI] getPositions getSafeBalance failed:", e.message);
     }
   }
 
@@ -357,12 +322,39 @@ export async function getDailyApyHistory(smartWalletAddress, period = "30D") {
   console.log(`[ZyFAI] getDailyApyHistory — smartWallet: ${smartWalletAddress}, period: ${period}`);
   const sdk = createSdk();
   const result = await sdk.getDailyApyHistory(smartWalletAddress, period);
-  console.log("[ZyFAI] APY history:", result);
-  const entries = result?.data ?? [];
-  if (!entries.length) return null;
-  const latest = entries[entries.length - 1].apy;
-  // SDK returns decimal (0.143) — convert to percentage string
-  return latest < 1 ? (latest * 100).toFixed(2) : Number(latest).toFixed(2);
+  console.log("[ZyFAI] getDailyApyHistory raw:", JSON.stringify(result?.weightedApyWithRzfiAfterFee ?? result?.history ?? result));
+
+  // ── Primary: top-level weighted APY including fees + Merkl rewards ────────
+  // result.weightedApyWithRzfiAfterFee = { "USDC": 5.5058 }  (already %)
+  const topLevel = result?.weightedApyWithRzfiAfterFee ?? result?.weightedApyAfterFee;
+  if (topLevel && typeof topLevel === "object") {
+    const val = topLevel["USDC"] ?? topLevel["WETH"] ?? Object.values(topLevel)[0];
+    if (typeof val === "number" && isFinite(val) && val > 0) {
+      console.log("[ZyFAI] getDailyApyHistory result (top-level):", val);
+      return val.toFixed(2);
+    }
+  }
+
+  // ── Fallback: most recent day's final_weighted_apy from history object ────
+  // result.history = { "2026-03-21": { final_weighted_apy: { "USDC": 5.5058 } } }
+  const historyObj = result?.history;
+  if (historyObj && typeof historyObj === "object") {
+    const dates = Object.keys(historyObj).sort().reverse();
+    for (const date of dates) {
+      const day = historyObj[date];
+      const fwa = day?.final_weighted_apy ?? day?.weighted_apy_after_fee ?? day?.weighted_apy;
+      if (fwa && typeof fwa === "object") {
+        const v = fwa["USDC"] ?? fwa["WETH"] ?? Object.values(fwa)[0];
+        if (typeof v === "number" && isFinite(v) && v > 0) {
+          console.log(`[ZyFAI] getDailyApyHistory result (${date}):`, v);
+          return v.toFixed(2);
+        }
+      }
+    }
+  }
+
+  console.warn("[ZyFAI] getDailyApyHistory: no usable APY found in response");
+  return null;
 }
 
 /**
