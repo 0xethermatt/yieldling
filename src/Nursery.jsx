@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { useWallets } from "@privy-io/react-auth";
 import {
   depositToZyfai,
+  ensureBaseChain,
   ensureSessionKey,
   getYieldEarned,
   getDailyApyHistory,
@@ -404,6 +405,24 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
   text-align: center;
 }
 .tip-dismiss:hover { background: rgba(106,255,212,.15); }
+/* network badge */
+.net-badge {
+  display: flex; align-items: center; gap: 5px;
+  font-size: 11px; font-weight: 800; letter-spacing: .4px; text-transform: uppercase;
+  padding: 4px 10px; border-radius: 20px;
+  transition: all .25s;
+}
+.net-badge.on-base {
+  background: rgba(0,82,255,.12); color: #4f8aff;
+  border: 1px solid rgba(0,82,255,.25);
+}
+.net-badge.wrong-net {
+  background: rgba(255,80,80,.12); color: #ff6060;
+  border: 1px solid rgba(255,80,80,.3);
+  cursor: pointer; animation: netpulse 2s ease-in-out infinite;
+}
+@keyframes netpulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+.net-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
 /* + Deposit button */
 .deposit-btn-row { display: flex; justify-content: center; padding: 2px 16px 10px; }
 .deposit-btn {
@@ -567,6 +586,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   const [showDepositModal, setShowDepositModal] = useState(false);
   const [customAmount, setCustomAmount]         = useState("");
   const [depositing, setDepositing]             = useState(false);
+  const [onBase, setOnBase]                     = useState(null); // null=unknown, true, false
   const petRef = useRef(null);
   const sparkleId = useRef(0);
   const xpId = useRef(0);
@@ -717,6 +737,22 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     }
     setPrevStageName(stage.name);
   }, [stage.name]);
+  // Watch current chain — update onBase state + listen for chainChanged events
+  useEffect(() => {
+    let cleanup = () => {};
+    const checkChain = async () => {
+      try {
+        const provider = await getProvider();
+        const chainId  = await provider.request({ method: "eth_chainId" });
+        setOnBase(chainId === "0x2105");
+        const onChainChanged = (id) => setOnBase(id === "0x2105");
+        provider.on?.("chainChanged", onChainChanged);
+        cleanup = () => provider.removeListener?.("chainChanged", onChainChanged);
+      } catch { /* no provider yet */ }
+    };
+    checkChain();
+    return () => cleanup();
+  }, [walletAddress]);
   // Deplete needs every 30s using per-bar depletion rates (respects MIN_BAR floor)
   useEffect(() => {
     const TICK_MS = 30_000;
@@ -749,6 +785,15 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     setToastMsg(msg); setShowToast(true);
     setTimeout(() => setShowToast(false), 3200);
   };
+  // Ensure wallet is on Base before any deposit — shows toast if switch needed
+  const ensureBase = async (provider) => {
+    const chainId = await provider.request({ method: "eth_chainId" });
+    if (chainId !== "0x2105") {
+      toast("🔄 Switching to Base network...");
+      await ensureBaseChain(provider);
+      setOnBase(true);
+    }
+  };
   const spawnSparkle = (x, y, emoji) => {
     const id = sparkleId.current++;
     const sx = (Math.random() - .5) * 60 + "px";
@@ -774,6 +819,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       // internally (Step 4), so no separate ensureSessionKey call needed here.
       if (walletAddress) {
         const provider = await getProvider();
+        await ensureBase(provider);
         const strategy = "aggressive";
         await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider, strategy);
         // Always add to existing deposited total — previous deposits may be in
@@ -843,6 +889,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     try {
       if (walletAddress) {
         const provider = await getProvider();
+        await ensureBase(provider);
         await depositToZyfai(amount, walletAddress, cfg.asset, provider, "aggressive");
         setDeposited(prev => prev + amount);
       }
@@ -956,9 +1003,28 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
               <div className="topbar-level">{defaultName.toUpperCase()} · {stage.level}</div>
             </div>
           </div>
-          <div className="streak-pill">
-            <div className="streak-top">🔥 <span className="streak-count">{daysAlive}</span></div>
-            <div className="streak-lbl">Days alive</div>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 6 }}>
+            <div className="streak-pill">
+              <div className="streak-top">🔥 <span className="streak-count">{daysAlive}</span></div>
+              <div className="streak-lbl">Days alive</div>
+            </div>
+            {onBase !== null && (
+              <div
+                className={`net-badge ${onBase ? "on-base" : "wrong-net"}`}
+                onClick={onBase ? undefined : async () => {
+                  try {
+                    const provider = await getProvider();
+                    toast("🔄 Switching to Base network...");
+                    await ensureBaseChain(provider);
+                    setOnBase(true);
+                  } catch { toast("❌ Could not switch network"); }
+                }}
+                title={onBase ? "Connected to Base" : "Click to switch to Base"}
+              >
+                <span className="net-dot" />
+                {onBase ? "Base" : "Wrong Network"}
+              </div>
+            )}
           </div>
         </div>
         {/* Stat Cards */}

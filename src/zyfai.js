@@ -40,6 +40,52 @@ function createSdk() {
   return sdk;
 }
 
+// ── Chain utilities ───────────────────────────────────────────────────────────
+
+const BASE_CHAIN_ID_HEX = "0x2105"; // 8453 decimal
+
+/**
+ * Ensure the connected wallet is on Base mainnet (chainId 8453).
+ * If the wallet is on a different chain, prompts to switch.
+ * If Base is not yet added to the wallet, adds it first then switches.
+ *
+ * Resolves silently if already on Base; throws if the user rejects the switch.
+ *
+ * @param {object} provider - EIP-1193 provider
+ */
+export async function ensureBaseChain(provider) {
+  const current = await provider.request({ method: "eth_chainId" });
+  if (current === BASE_CHAIN_ID_HEX) return; // already on Base
+
+  const BASE_PARAMS = {
+    chainId:           BASE_CHAIN_ID_HEX,
+    chainName:         "Base",
+    rpcUrls:           ["https://mainnet.base.org"],
+    nativeCurrency:    { name: "Ether", symbol: "ETH", decimals: 18 },
+    blockExplorerUrls: ["https://basescan.org"],
+  };
+
+  try {
+    await provider.request({
+      method: "wallet_switchEthereumChain",
+      params: [{ chainId: BASE_CHAIN_ID_HEX }],
+    });
+  } catch (err) {
+    // 4902 = chain not added to wallet yet
+    const code = err?.code ?? err?.data?.originalError?.code;
+    if (code === 4902) {
+      await provider.request({ method: "wallet_addEthereumChain", params: [BASE_PARAMS] });
+      // After adding, switch explicitly (some wallets need it)
+      await provider.request({
+        method: "wallet_switchEthereumChain",
+        params: [{ chainId: BASE_CHAIN_ID_HEX }],
+      });
+    } else {
+      throw err;
+    }
+  }
+}
+
 // ── Exported functions ────────────────────────────────────────────────────────
 
 /**
