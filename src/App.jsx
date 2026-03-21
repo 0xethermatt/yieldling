@@ -80,6 +80,25 @@ const css = `
     background: rgba(124,106,255,.15); border: 1px solid rgba(124,106,255,.35);
     color: var(--accent);
   }
+  /* hamburger */
+  .nav-hamburger {
+    display: none; background: none; border: none; color: var(--text);
+    font-size: 22px; cursor: pointer; padding: 4px 6px; line-height: 1;
+  }
+  .nav-dropdown {
+    position: absolute; top: 100%; left: 0; right: 0;
+    background: rgba(8,8,16,0.97); backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    display: flex; flex-direction: column; padding: 8px 0;
+  }
+  .nav-dropdown-item {
+    background: none; border: none; color: var(--text);
+    font-family: var(--font); font-size: 15px; font-weight: 700;
+    padding: 14px 24px; text-align: left; cursor: pointer;
+    transition: background .15s;
+  }
+  .nav-dropdown-item:hover { background: rgba(124,106,255,.1); }
+  .nav-dropdown-item.active { color: var(--accent); }
   /* connect gate */
   .gate-wrap {
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -193,6 +212,7 @@ const css = `
   @media (max-width: 430px) {
     .nav { padding: 12px 16px; }
     .nav-tabs { display: none; }
+    .nav-hamburger { display: block; }
     .nav-wallet { padding: 8px 14px; font-size: 12px; }
     .hero-tag { font-size: 10px; letter-spacing: 1.5px; padding: 5px 12px; margin-bottom: 28px; }
     .hero-egg { margin-bottom: 32px; }
@@ -728,8 +748,9 @@ function Nav({ screen, setScreen }) {
   const shortAddr = addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : null;
   const tabs = ["landing", "adopt", "nursery"];
   const labels = ["Home", "Adopt", "Nursery"];
+  const [menuOpen, setMenuOpen] = useState(false);
   return (
-    <nav className="nav">
+    <nav className="nav" style={{ position: "fixed", flexWrap: "wrap" }}>
       <div className="nav-logo">🥚 Yieldling</div>
       <div className="nav-tabs">
         {tabs.map((t, i) => (
@@ -738,10 +759,25 @@ function Nav({ screen, setScreen }) {
           </button>
         ))}
       </div>
-      {!ready ? null : authenticated && shortAddr ? (
-        <button className="nav-wallet addr" onClick={logout}>{shortAddr}</button>
-      ) : (
-        <button className="nav-wallet" onClick={login}>Connect</button>
+      <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+        {!ready ? null : authenticated && shortAddr ? (
+          <button className="nav-wallet addr" onClick={logout}>{shortAddr}</button>
+        ) : (
+          <button className="nav-wallet" onClick={login}>Connect</button>
+        )}
+        <button className="nav-hamburger" onClick={() => setMenuOpen(o => !o)}>
+          {menuOpen ? "✕" : "☰"}
+        </button>
+      </div>
+      {menuOpen && (
+        <div className="nav-dropdown">
+          {tabs.map((t, i) => (
+            <button key={t} className={`nav-dropdown-item ${screen === t ? "active" : ""}`}
+              onClick={() => { setScreen(t); setMenuOpen(false); }}>
+              {labels[i]}
+            </button>
+          ))}
+        </div>
       )}
     </nav>
   );
