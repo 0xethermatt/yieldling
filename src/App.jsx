@@ -772,7 +772,7 @@ function Landing({ setScreen }) {
       <div className="landing-glow" />
       <div className="hero-tag">🥚 Yieldling — Powered by ZyFAI · AI-Optimised DeFi Yield</div>
       <div className={`hero-egg ${cracking ? "crack" : ""}`} onClick={crack}>🥚</div>
-      <h1 className="hero-h1">Your savings,<br /><span>alive.</span></h1>
+      <h1 className="hero-h1">The pet that<br /><span>pays you back.</span></h1>
       <p className="hero-sub">
         Adopt a pet. Deposit once. ZyFAI automatically finds the best yield across DeFi protocols —
         no jargon, no dashboards, just a creature that thrives when your money works.
