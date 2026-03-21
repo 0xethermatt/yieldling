@@ -245,109 +245,160 @@ export async function getAggressiveOpportunities(chainId = 8453) {
   return normaliseOpps(result);
 }
 
+// ── Internal: parse underlyingAmount / staleBalance raw string → USD float ───
+// Both underlyingAmount and staleBalances.balance are in token base units:
+//   USDC (6 decimals):  "20000184" → 20.000184
+//   WETH (18 decimals): "500000000000000" → 0.0005
+function parseTokenAmount(raw, tokenSymbol) {
+  if (raw === null || raw === undefined) return 0;
+  const decimals = (tokenSymbol ?? "").toUpperCase() === "WETH" ? 1e18 : 1e6;
+  const n = typeof raw === "string" && raw.startsWith("0x")
+    ? Number(BigInt(raw)) / decimals
+    : Number(raw) / decimals;
+  return isFinite(n) ? n : 0;
+}
+
 /**
  * Fetch individual active positions for a wallet as a structured array.
- * Uses getDailyApyHistory which is the only SDK endpoint that returns
- * actual position data (sdk.getPositions always returns portfolio:{}).
+ *
+ * Primary: sdk.getPositions(walletAddress, chainId) — real-time after SIWE auth.
+ *   portfolio.positions[]: { protocol_name, token_symbol, pool, pool_apy, underlyingAmount }
+ *
+ * Fallback: getDailyApyHistory (works without auth, nightly snapshot ~24h lag).
  *
  * @param {string} walletAddress
  * @param {number} [chainId=8453]
- * @param {string} [safeAddress=null] - Pre-resolved Safe/smart wallet address
+ * @param {string} [safeAddress=null]
  * @returns {Array<{ protocol: string, token: string, apy: string, value: number }>}
  */
 export async function getPositionDetails(walletAddress, chainId = 8453, safeAddress = null) {
-  const queryAddr = safeAddress ?? walletAddress;
-  console.log(`[ZyFAI] getPositionDetails — querying with: ${queryAddr}`);
   const sdk = createSdk();
 
+  // ── Primary: sdk.getPositions() ──────────────────────────────────────────
   try {
-    const result = await sdk.getDailyApyHistory(queryAddr, "7D");
-    console.log("[ZyFAI] getPositionDetails getDailyApyHistory raw:", JSON.stringify(result, null, 2));
+    const raw = await sdk.getPositions(walletAddress, chainId);
+    console.log("[ZyFAI] getPositionDetails sdk.getPositions RAW:", JSON.stringify(raw, null, 2));
 
+    const positions = raw?.portfolio?.positions ?? [];
+    if (positions.length > 0) {
+      return positions
+        .filter(p => p.protocol_name || p.pool)
+        .map(p => {
+          const sym    = p.token_symbol ?? "USDC";
+          const apyN   = parseFloat(p.pool_apy ?? 0);
+          return {
+            protocol: `${p.protocol_name ?? "Unknown"}${p.pool ? ` · ${p.pool}` : ""}`,
+            token:    sym,
+            apy:      isFinite(apyN) ? apyN.toFixed(2) : "—",
+            value:    parseTokenAmount(p.underlyingAmount, sym),
+          };
+        });
+    }
+    console.log("[ZyFAI] getPositionDetails: portfolio.positions empty (no auth?) — falling back to history");
+  } catch (e) {
+    console.warn("[ZyFAI] getPositionDetails sdk.getPositions failed:", e.message);
+  }
+
+  // ── Fallback: getDailyApyHistory ─────────────────────────────────────────
+  const queryAddr = safeAddress ?? walletAddress;
+  try {
+    const result     = await sdk.getDailyApyHistory(queryAddr, "7D");
     const historyObj = result?.history;
     if (!historyObj || typeof historyObj !== "object") return [];
-
-    // Sort dates descending, take the most recent day
-    const dates = Object.keys(historyObj).sort().reverse();
-    if (!dates.length) return [];
-
-    const latestDay = historyObj[dates[0]];
-    const positions = latestDay?.positions;
-    if (!Array.isArray(positions) || !positions.length) return [];
-
-    // final_weighted_apy includes ZyFAI fee + Merkl rewards — best number to show per token
-    const finalApy = latestDay?.final_weighted_apy ?? {};
-
+    const dates      = Object.keys(historyObj).sort().reverse();
+    const latestDay  = historyObj[dates[0]] ?? {};
+    const positions  = latestDay?.positions ?? [];
+    const finalApy   = latestDay?.final_weighted_apy ?? {};
     return positions.map(pos => {
-      const sym    = pos.tokenSymbol ?? pos.token ?? "USDC";
-      const poolSuffix = pos.pool ? ` · ${pos.pool}` : "";
-      // Use position-level pool APY; fall back to token-level weighted APY
-      const apyRaw = pos.apy ?? finalApy[sym] ?? 0;
-      const apyN   = parseFloat(apyRaw);
+      const sym  = pos.tokenSymbol ?? "USDC";
+      const apyN = parseFloat(pos.apy ?? finalApy[sym] ?? 0);
       return {
-        protocol: `${pos.protocol ?? "Unknown"}${poolSuffix}`,
+        protocol: `${pos.protocol ?? "Unknown"}${pos.pool ? ` · ${pos.pool}` : ""}`,
         token:    sym,
-        apy:      !isFinite(apyN) ? "—" : apyN.toFixed(2),
+        apy:      isFinite(apyN) ? apyN.toFixed(2) : "—",
         value:    isFinite(pos.balance) ? pos.balance : 0,
       };
     });
   } catch (e) {
-    console.warn("[ZyFAI] getPositionDetails failed:", e.message);
+    console.warn("[ZyFAI] getPositionDetails history fallback failed:", e.message);
     return [];
   }
 }
 
 /**
- * Fetch the total deposited value for a wallet.
+ * Fetch total deposited value for a wallet.
  *
- * sdk.getPositions() always returns portfolio:{} without an authenticated session,
- * so we use getDailyApyHistory which works with just an API key and returns
- * per-position balance snapshots from the previous midnight.
+ * Primary: sdk.getPositions() — sums portfolio.positions[].underlyingAmount
+ *   PLUS portfolio.staleBalances[].balance (idle funds in Safe awaiting deployment).
+ *   Total = deployed capital + idle capital = real-time balance (requires SIWE auth).
  *
- * We also add the on-chain Safe USDC balance (funds sitting in the Safe
- * that haven't been allocated to a yield strategy yet).
+ * Fallback: getDailyApyHistory snapshot + on-chain getSafeBalance (no auth needed,
+ *   but lags up to 24h for deployed portion; Safe balance is always real-time).
  *
- * @param {string} walletAddress      - EOA wallet address (fallback query address)
+ * @param {string} walletAddress
  * @param {number} [chainId=8453]
- * @param {string} [safeAddress=null] - Pre-resolved Safe/smart wallet address
- * @returns {number} Total deposited value in USD, or 0 on failure
+ * @param {string} [safeAddress=null]
+ * @returns {number} Total USD value, or 0 on failure
  */
 export async function getPositions(walletAddress, chainId = 8453, safeAddress = null) {
-  const queryAddr = safeAddress ?? walletAddress;
-  console.log(`[ZyFAI] getPositions — queryAddr: ${queryAddr}`);
+  console.log(`[ZyFAI] getPositions — wallet: ${walletAddress}, safe: ${safeAddress}`);
   const sdk = createSdk();
 
-  // ── Primary: sum balances from daily APY history snapshot ────────────────
-  // getDailyApyHistory returns positions[].balance (USD, float) for the most
-  // recent daily snapshot (taken at midnight UTC). This lags real-time by up
-  // to 24 h but is the only unauth'd endpoint that returns allocated balances.
-  let deployedTotal = 0;
+  // ── Primary: sdk.getPositions() — real-time when authenticated ───────────
+  // Sums underlyingAmount (deployed to protocols) + staleBalances (idle in Safe)
   try {
-    const result = await sdk.getDailyApyHistory(queryAddr, "7D");
-    const historyObj = result?.history;
-    if (historyObj && typeof historyObj === "object") {
-      const dates = Object.keys(historyObj).sort().reverse();
-      if (dates.length > 0) {
-        const latestDay = historyObj[dates[0]];
-        const positions = latestDay?.positions ?? [];
-        deployedTotal = positions.reduce((s, pos) => {
-          const bal = pos.balance;
-          return s + (typeof bal === "number" && isFinite(bal) ? bal : 0);
-        }, 0);
-        console.log(`[ZyFAI] getPositions snapshot (${dates[0]}): deployedTotal=${deployedTotal}`, positions);
-      }
+    const raw = await sdk.getPositions(walletAddress, chainId);
+    console.log("[ZyFAI] getPositions sdk.getPositions RAW:", JSON.stringify(raw, null, 2));
+
+    const portfolio     = raw?.portfolio ?? {};
+    const positions     = portfolio.positions    ?? [];
+    const staleBalances = portfolio.staleBalances ?? [];
+
+    const hasData = positions.length > 0 || staleBalances.length > 0;
+    if (hasData) {
+      // Sum deployed positions (underlyingAmount = base units)
+      const deployedTotal = positions.reduce((s, p) => {
+        return s + parseTokenAmount(p.underlyingAmount, p.token_symbol);
+      }, 0);
+
+      // Sum idle balances (balance = base units, isPending = not yet deployed)
+      const staleTotal = staleBalances.reduce((s, b) => {
+        return s + parseTokenAmount(b.balance, b.tokenSymbol);
+      }, 0);
+
+      const total = deployedTotal + staleTotal;
+      console.log(`[ZyFAI] getPositions real-time — deployed: $${deployedTotal.toFixed(4)}, stale: $${staleTotal.toFixed(4)}, total: $${total.toFixed(4)}`);
+      return total;
     }
+    console.log("[ZyFAI] getPositions: portfolio empty (no SIWE auth) — falling back");
   } catch (e) {
-    console.warn("[ZyFAI] getPositions getDailyApyHistory failed:", e.message);
+    console.warn("[ZyFAI] getPositions sdk.getPositions failed:", e.message);
   }
 
-  // ── Add Safe's on-chain pending balance ──────────────────────────────────
-  // Funds sitting in the Safe USDC balance are not yet in a yield protocol
-  // (they were just topped up). Add them on top of the snapshot balance.
+  // ── Fallback: nightly snapshot + real-time on-chain Safe balance ─────────
+  const queryAddr = safeAddress ?? walletAddress;
+  let deployedTotal = 0;
+  try {
+    const result     = await sdk.getDailyApyHistory(queryAddr, "7D");
+    const historyObj = result?.history;
+    if (historyObj && typeof historyObj === "object") {
+      const dates     = Object.keys(historyObj).sort().reverse();
+      const latestDay = historyObj[dates[0]] ?? {};
+      deployedTotal   = (latestDay.positions ?? []).reduce((s, pos) => {
+        const bal = pos.balance;
+        return s + (typeof bal === "number" && isFinite(bal) ? bal : 0);
+      }, 0);
+      console.log(`[ZyFAI] getPositions history fallback (${dates[0]}): $${deployedTotal.toFixed(4)}`);
+    }
+  } catch (e) {
+    console.warn("[ZyFAI] getPositions getDailyApyHistory fallback failed:", e.message);
+  }
+
+  // Always add real-time Safe on-chain USDC (staleBalances equivalent)
   if (safeAddress) {
     try {
       const usdcBal = await getSafeBalance(safeAddress, "USDC");
-      console.log(`[ZyFAI] getPositions safe USDC balance: ${usdcBal}, deployed: ${deployedTotal}`);
+      console.log(`[ZyFAI] getPositions safe USDC (on-chain): $${usdcBal.toFixed(4)}, snapshot: $${deployedTotal.toFixed(4)}`);
       return deployedTotal + usdcBal;
     } catch (e) {
       console.warn("[ZyFAI] getPositions getSafeBalance failed:", e.message);
