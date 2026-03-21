@@ -189,6 +189,19 @@ const css = `
     font-size: 11px; color: var(--dim); font-weight: 700;
     text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
   }
+  /* ── MOBILE ── */
+  @media (max-width: 430px) {
+    .nav { padding: 12px 16px; }
+    .nav-wallet { padding: 8px 14px; font-size: 12px; }
+    .hero-tag { font-size: 10px; letter-spacing: 1.5px; padding: 5px 12px; margin-bottom: 28px; }
+    .hero-egg { margin-bottom: 32px; }
+    .hero-h1 { font-size: clamp(36px,9vw,70px); margin-bottom: 24px; }
+    .hero-sub { font-size: 15px; margin-bottom: 40px; }
+    .hero-cta { min-height: 56px; font-size: 16px; padding: 0 36px; }
+    .hero-stats { gap: 36px; margin-top: 52px; }
+    .hero-stat .val { font-size: 30px; }
+    .hero-stat .lbl { font-size: 12px; margin-top: 6px; }
+  }
   /* ── ADOPT ── */
   .adopt-wrap {
     display: flex; align-items: center; justify-content: center;
@@ -807,7 +820,7 @@ function Landing({ setScreen }) {
         Adopt a pet. Deposit once. ZyFAI automatically finds the best yield across DeFi protocols —
         no jargon, no dashboards, just a creature that thrives when your money works.
       </p>
-      <button className="hero-cta" onClick={() => setScreen("adopt")}>Adopt Your Pet →</button>
+      <button className="hero-cta" onClick={() => setScreen("adopt")}>Adopt your Yieldling →</button>
       <div className="hero-stats">
         {stats.map(({ val, lbl, loading }) => (
           <div className="hero-stat" key={lbl}>
