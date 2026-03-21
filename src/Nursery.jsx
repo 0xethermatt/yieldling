@@ -719,7 +719,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       // internally (Step 4), so no separate ensureSessionKey call needed here.
       if (walletAddress) {
         const provider = await getProvider();
-        const strategy = character === "volty" ? "aggressive" : "conservative";
+        const strategy = "aggressive";
         await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider, strategy);
         // Always add to existing deposited total — previous deposits may be in
         // ZyFAI strategies (not in the Safe) so reading safeBalance would only
