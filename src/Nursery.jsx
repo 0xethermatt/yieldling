@@ -423,6 +423,24 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 }
 @keyframes netpulse { 0%,100%{opacity:1} 50%{opacity:.6} }
 .net-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; flex-shrink: 0; }
+/* character switcher */
+.char-switcher {
+  display: flex; gap: 8px; padding: 0 16px 8px; flex-shrink: 0;
+  justify-content: center;
+}
+.char-switch-btn {
+  display: flex; align-items: center; gap: 7px;
+  background: var(--surface2); border: 1.5px solid var(--border);
+  border-radius: 20px; padding: 7px 16px;
+  font-family: var(--font); font-size: 12px; font-weight: 800;
+  color: var(--dim); cursor: pointer; transition: all .2s;
+}
+.char-switch-btn:hover { border-color: var(--purple); color: var(--text); }
+.char-switch-btn.active {
+  background: rgba(124,106,255,.15); border-color: var(--purple);
+  color: var(--purple);
+}
+.char-switch-img { width: 22px; height: 22px; object-fit: contain; }
 /* + Deposit button */
 .deposit-btn-row { display: flex; justify-content: center; padding: 2px 16px 10px; }
 .deposit-btn {
@@ -546,7 +564,7 @@ function getNextStage(y) {
   return STAGES.find(s => s.threshold > y) || STAGES[STAGES.length - 1];
 }
 function fmt(n) { return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-export default function Nursery({ walletAddress, smartWalletAddress, character = "stabby" }) {
+export default function Nursery({ walletAddress, smartWalletAddress, character = "stabby", ownedCharacters = [], onSwitchCharacter }) {
   const { wallets } = useWallets();
   // Returns the EIP-1193 provider for the active wallet (Privy or injected)
   const getProvider = useCallback(async () => {
@@ -1027,6 +1045,25 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
             )}
           </div>
         </div>
+        {/* Character Switcher — shown when wallet owns multiple Yieldlings */}
+        {ownedCharacters.length > 1 && (
+          <div className="char-switcher">
+            {ownedCharacters.map(c => {
+              const img   = CHAR_IMGS[c]?.[0];
+              const label = c.charAt(0).toUpperCase() + c.slice(1);
+              return (
+                <button
+                  key={c}
+                  className={`char-switch-btn ${c === character ? "active" : ""}`}
+                  onClick={() => onSwitchCharacter?.(c)}
+                >
+                  {img && <img className="char-switch-img" src={img} alt={c} />}
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        )}
         {/* Stat Cards */}
         <div className="stat-cards">
           <div className="stat-card teal">

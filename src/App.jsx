@@ -474,6 +474,29 @@ const css = `
     box-shadow: 0 0 30px rgba(255,106,176,.22), inset 0 0 30px rgba(255,106,176,.06);
     background: rgba(255,106,176,.04);
   }
+  .char-card.adopted { cursor: default; }
+  .char-card.adopted:hover { transform: none; }
+  .char-adopted-overlay {
+    position: absolute; inset: 0;
+    background: rgba(8,8,16,.8);
+    border-radius: 18px;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px; z-index: 10; padding: 16px;
+  }
+  .char-adopted-tag {
+    font-size: 11px; font-weight: 900; text-transform: uppercase;
+    letter-spacing: 1.5px; padding: 5px 14px; border-radius: 20px;
+    background: rgba(106,255,212,.15); border: 1px solid rgba(106,255,212,.35);
+    color: var(--accent3);
+  }
+  .char-view-nursery-btn {
+    font-size: 12px; font-weight: 800; padding: 8px 18px;
+    border-radius: 20px; border: none; cursor: pointer;
+    background: linear-gradient(135deg, var(--accent3), var(--accent));
+    color: #fff; transition: opacity .2s; white-space: nowrap;
+  }
+  .char-view-nursery-btn:hover { opacity: .85; }
   .char-preview {
     width: 120px; height: 120px; object-fit: contain;
     margin: 0 auto 14px; display: block;
@@ -898,6 +921,18 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
   const walletAddress     = activeWallet?.address ?? null;
   const isEmbedded        = activeWallet?.walletClientType === "privy";
 
+  // Which characters has this wallet already adopted?
+  const adoptedChars = walletAddress
+    ? ["stabby", "volty"].filter(c => {
+        const perChar = localStorage.getItem(`yieldling_${c}_adopted`) === "true"
+                     && localStorage.getItem(`yieldling_${c}_wallet`)  === walletAddress;
+        const legacy  = c === (localStorage.getItem("yieldling_character") ?? "stabby")
+                     && localStorage.getItem("yieldling_adopted")  === "true"
+                     && localStorage.getItem("yieldling_wallet")   === walletAddress;
+        return perChar || legacy;
+      })
+    : [];
+
   const [funded,        setFunded]        = useState(!isEmbedded);
   const [selectedChar,  setSelectedChar]  = useState("stabby");
   const [petName,       setPetName]       = useState(() => localStorage.getItem("yieldling_pet_name") ?? "");
@@ -918,6 +953,16 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
 
   // Clear amount when character switches — units are incompatible
   useEffect(() => { setAmount(""); }, [selectedChar]);
+
+  // Auto-select the non-adopted char; redirect to Nursery if both are already adopted
+  useEffect(() => {
+    if (!walletAddress) return;
+    if (adoptedChars.length >= 2) { setScreen("nursery"); return; }
+    if (adoptedChars.includes(selectedChar)) {
+      const next = ["stabby", "volty"].find(c => !adoptedChars.includes(c));
+      if (next) setSelectedChar(next);
+    }
+  }, [walletAddress]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Live APY per character ───────────────────────────────────────────────
   const [apys,       setApys]       = useState({ stabby: null, volty: null });
@@ -989,6 +1034,11 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
       localStorage.setItem("yieldling_wallet",      walletAddress);
       localStorage.setItem("yieldling_character",   selectedChar);
       localStorage.setItem("yieldling_smart_wallet", result.smartWallet);
+      // Per-character keys (allow owning one Stabby + one Volty)
+      localStorage.setItem(`yieldling_${selectedChar}_adopted`,      "true");
+      localStorage.setItem(`yieldling_${selectedChar}_wallet`,       walletAddress);
+      localStorage.setItem(`yieldling_${selectedChar}_smart_wallet`, result.smartWallet);
+      localStorage.setItem(`yieldling_${selectedChar}_adopted_at`,   String(Date.now()));
       bumpYieldlings();
       setScreen("nursery");
     } catch (err) {
@@ -1030,13 +1080,23 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
         <p>Pick your creature — it sets your asset and strategy automatically.</p>
         <div className="char-grid">
           {chars.map(c => {
-            const imgs  = CHAR_IMGS[c.id];
-            const label = c.id.charAt(0).toUpperCase() + c.id.slice(1);
-            const apy   = apys[c.id];
+            const imgs      = CHAR_IMGS[c.id];
+            const label     = c.id.charAt(0).toUpperCase() + c.id.slice(1);
+            const apy       = apys[c.id];
+            const isAdopted = adoptedChars.includes(c.id);
             return (
               <div key={c.id}
-                className={`char-card ${selectedChar === c.id ? `sel-${c.accentCls}` : ""}`}
-                onClick={() => setSelectedChar(c.id)}>
+                className={`char-card ${selectedChar === c.id && !isAdopted ? `sel-${c.accentCls}` : ""} ${isAdopted ? "adopted" : ""}`}
+                onClick={isAdopted ? undefined : () => setSelectedChar(c.id)}>
+                {isAdopted && (
+                  <div className="char-adopted-overlay">
+                    <div className="char-adopted-tag">✓ Already Adopted</div>
+                    <button
+                      className="char-view-nursery-btn"
+                      onClick={e => { e.stopPropagation(); setScreen("nursery"); }}
+                    >→ View in Nursery</button>
+                  </div>
+                )}
                 {/* Main hero image */}
                 <img className="char-preview" src={imgs[1]} alt={c.id}
                   style={{ width: 140, height: 140 }} />
@@ -1191,9 +1251,14 @@ export default function App() {
   // Guarded navigation — blocks Nursery access for non-adopted wallets
   const setScreen = (target) => {
     if (target === "nursery") {
-      const adopted     = localStorage.getItem("yieldling_adopted") === "true";
-      const savedWallet = localStorage.getItem("yieldling_wallet");
-      if (!adopted || savedWallet !== walletAddress) {
+      const hasAny = walletAddress && (
+        (localStorage.getItem("yieldling_adopted") === "true" && localStorage.getItem("yieldling_wallet") === walletAddress) ||
+        ["stabby", "volty"].some(c =>
+          localStorage.getItem(`yieldling_${c}_adopted`) === "true" &&
+          localStorage.getItem(`yieldling_${c}_wallet`) === walletAddress
+        )
+      );
+      if (!hasAny) {
         showAppToast("🥚 Adopt a Yieldling first to access the Nursery");
         setScreenRaw("adopt");
         return;
@@ -1205,10 +1270,13 @@ export default function App() {
   // Auto-route a returning adopted wallet straight to the Nursery
   useEffect(() => {
     if (!walletAddress) return;
-    const adopted     = localStorage.getItem("yieldling_adopted") === "true";
-    const savedWallet = localStorage.getItem("yieldling_wallet");
-    if (adopted && savedWallet === walletAddress) {
-      // Restore character + smart wallet from storage (may already be initialised)
+    const legacyOk = localStorage.getItem("yieldling_adopted") === "true"
+                  && localStorage.getItem("yieldling_wallet") === walletAddress;
+    const perCharOk = ["stabby", "volty"].some(c =>
+      localStorage.getItem(`yieldling_${c}_adopted`) === "true" &&
+      localStorage.getItem(`yieldling_${c}_wallet`) === walletAddress
+    );
+    if (legacyOk || perCharOk) {
       const savedChar        = localStorage.getItem("yieldling_character");
       const savedSmartWallet = localStorage.getItem("yieldling_smart_wallet");
       if (savedChar)        setCharacter(savedChar);
@@ -1216,6 +1284,30 @@ export default function App() {
       setScreenRaw("nursery");
     }
   }, [walletAddress]);
+
+  // Characters this wallet currently owns (drives the in-Nursery switcher)
+  const ownedCharacters = walletAddress
+    ? (() => {
+        const owned = [];
+        for (const c of ["stabby", "volty"]) {
+          const hasChar =
+            (localStorage.getItem(`yieldling_${c}_adopted`) === "true" && localStorage.getItem(`yieldling_${c}_wallet`) === walletAddress) ||
+            (localStorage.getItem("yieldling_character") === c && localStorage.getItem("yieldling_adopted") === "true" && localStorage.getItem("yieldling_wallet") === walletAddress);
+          if (hasChar) owned.push(c);
+        }
+        return owned;
+      })()
+    : [];
+
+  const handleSwitchCharacter = (charId) => {
+    setCharacter(charId);
+    // Restore the smart wallet for the selected character
+    const sw = localStorage.getItem(`yieldling_${charId}_smart_wallet`)
+            ?? (charId === (localStorage.getItem("yieldling_character") ?? "stabby")
+                ? localStorage.getItem("yieldling_smart_wallet")
+                : null);
+    if (sw) setSmartWalletAddress(sw);
+  };
 
   return (
     <>
@@ -1235,6 +1327,8 @@ export default function App() {
           walletAddress={walletAddress}
           smartWalletAddress={smartWalletAddress}
           character={character}
+          ownedCharacters={ownedCharacters}
+          onSwitchCharacter={handleSwitchCharacter}
         />
       )}
     </>
