@@ -978,7 +978,8 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
       const provider = await activeWallet?.getEthereumProvider?.() ?? window.ethereum;
       console.log("[Adopt] provider obtained:", provider?.constructor?.name ?? typeof provider);
 
-      const result = await depositToZyfai(amountNum, walletAddress, asset, provider);
+      const strategy = selectedChar === "volty" ? "aggressive" : "conservative";
+      const result = await depositToZyfai(amountNum, walletAddress, asset, provider, strategy);
       setSmartWalletAddress(result.smartWallet);
       setCharacter(selectedChar);
       // Persist all adoption state

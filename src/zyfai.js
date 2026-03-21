@@ -51,9 +51,9 @@ function createSdk() {
  * @param {object} provider         - EIP-1193 provider (Privy wallet or window.ethereum)
  * @returns {{ zyfai: object, smartWallet: string }}
  */
-export async function depositToZyfai(amount, walletAddress, asset = "USDC", provider = window.ethereum) {
+export async function depositToZyfai(amount, walletAddress, asset = "USDC", provider = window.ethereum, strategy = "conservative") {
   console.log(`[ZyFAI] ── depositToZyfai ──────────────────────────────────`);
-  console.log(`[ZyFAI] amount: ${amount}, asset: ${asset}, wallet: ${walletAddress}`);
+  console.log(`[ZyFAI] amount: ${amount}, asset: ${asset}, strategy: ${strategy}, wallet: ${walletAddress}`);
   console.log(`[ZyFAI] chainId: ${CHAIN_ID}, provider type: ${provider?.constructor?.name ?? typeof provider}`);
 
   const sdk = createSdk();
@@ -83,8 +83,8 @@ export async function depositToZyfai(amount, walletAddress, asset = "USDC", prov
   if (!wallet.isDeployed) {
     console.log("[ZyFAI] Step 3: deploying safe...");
     try {
-      await sdk.deploySafe(walletAddress, CHAIN_ID, "conservative");
-      console.log("[ZyFAI] Step 3 ✓ safe deployed");
+      await sdk.deploySafe(walletAddress, CHAIN_ID, strategy);
+      console.log("[ZyFAI] Step 3 ✓ safe deployed with strategy:", strategy);
     } catch (e) {
       console.error("[ZyFAI] Step 3 ✗ deploySafe failed:", e?.message, e?.code, e?.stack);
       throw e;
@@ -383,13 +383,13 @@ export async function checkWalletBalance(address) {
  *
  * @param {string} walletAddress - User's EOA wallet address
  */
-export async function ensureSessionKey(walletAddress, provider = window.ethereum) {
-  console.log(`[ZyFAI] ensureSessionKey — wallet: ${walletAddress}`);
+export async function ensureSessionKey(walletAddress, provider = window.ethereum, strategy = "conservative") {
+  console.log(`[ZyFAI] ensureSessionKey — wallet: ${walletAddress}, strategy: ${strategy}`);
   const sdk = createSdk();
   await sdk.connectAccount(provider, CHAIN_ID);
   const wallet = await sdk.getSmartWalletAddress(walletAddress, CHAIN_ID);
   if (!wallet.isDeployed) {
-    await sdk.deploySafe(walletAddress, CHAIN_ID, "conservative");
+    await sdk.deploySafe(walletAddress, CHAIN_ID, strategy);
   }
   const user = await sdk.getUserDetails();
   if (!user.hasActiveSessionKey) {
