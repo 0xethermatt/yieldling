@@ -10,6 +10,7 @@ import {
   getAggressiveOpportunities,
   getPositions,
   getPositionDetails,
+  getSafeBalance,
   withdrawYield,
 } from "./zyfai.js";
 const PET_NAME_KEY = "yieldling_pet_name";
@@ -610,23 +611,33 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     return () => clearInterval(iv);
   }, [character, smartWalletAddress]);
 
-  // Fetch deposited principal — drives health bar; poll every 60s
+  // Fetch deposited principal — drives health bar; poll every 60s.
+  // Primary: ZyFAI positions (funds deployed to protocols).
+  // Fallback: direct on-chain Safe balance (shows immediately after deposit,
+  //           before ZyFAI has had time to allocate to a strategy).
   useEffect(() => {
     if (!walletAddress) return;
     const fetchDeposited = async () => {
       try {
-        const val = await getPositions(walletAddress, 8453);
-        if (typeof val === "number" && isFinite(val) && val >= 0) setDeposited(val);
+        const posVal = await getPositions(walletAddress, 8453);
+        if (posVal > 0) {
+          setDeposited(posVal);
+        } else if (smartWalletAddress) {
+          // No deployed positions yet — read Safe's token balance directly
+          const cfg   = TAP_CFG[character] ?? TAP_CFG.stabby;
+          const safeVal = await getSafeBalance(smartWalletAddress, cfg.asset);
+          if (typeof safeVal === "number" && isFinite(safeVal)) setDeposited(safeVal);
+        }
       } catch (err) {
         console.error("[Nursery] getPositions failed:", err);
       } finally {
-        setDepositLoaded(true); // mark first fetch done regardless of result
+        setDepositLoaded(true);
       }
     };
     fetchDeposited();
     const iv = setInterval(fetchDeposited, 60_000);
     return () => clearInterval(iv);
-  }, [walletAddress]);
+  }, [walletAddress, smartWalletAddress, character]);
 
   // Fetch earned yield — poll every 30s when smart wallet is available
   useEffect(() => {
@@ -714,7 +725,20 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       // On-chain deposit
       if (walletAddress) {
         const provider = await getProvider();
-        await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider);
+        const depositResult = await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider);
+        // Optimistically update deposited balance — ZyFAI may take time to allocate
+        // to strategies, so also check Safe balance directly for immediate feedback.
+        if (smartWalletAddress || depositResult?.smartWallet) {
+          const safe = smartWalletAddress || depositResult?.smartWallet;
+          try {
+            const safeVal = await getSafeBalance(safe, cfg.asset);
+            setDeposited(safeVal > 0 ? safeVal : prev => prev + cfg.amount);
+          } catch {
+            setDeposited(prev => prev + cfg.amount);
+          }
+        } else {
+          setDeposited(prev => prev + cfg.amount);
+        }
       }
 
       // Refresh yield counter from chain

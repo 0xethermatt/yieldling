@@ -212,12 +212,14 @@ export async function getPositionDetails(walletAddress, chainId = 8453) {
   const result = await sdk.getPositions(walletAddress, chainId);
   console.log("[ZyFAI] getPositionDetails raw:", JSON.stringify(result, null, 2));
 
-  // Try every plausible array location in the response
+  // SDK wraps data in result.portfolio; try every plausible array location
   const entries =
-    Array.isArray(result?.data?.positions) ? result.data.positions :
-    Array.isArray(result?.data)            ? result.data            :
-    Array.isArray(result?.positions)       ? result.positions       :
-    Array.isArray(result)                  ? result                 :
+    Array.isArray(result?.portfolio?.positions) ? result.portfolio.positions :
+    Array.isArray(result?.portfolio)            ? result.portfolio            :
+    Array.isArray(result?.data?.positions)      ? result.data.positions      :
+    Array.isArray(result?.data)                 ? result.data                :
+    Array.isArray(result?.positions)            ? result.positions           :
+    Array.isArray(result)                       ? result                     :
     [];
 
   return entries
@@ -248,17 +250,33 @@ export async function getPositions(walletAddress, chainId = 8453) {
   const result = await sdk.getPositions(walletAddress, chainId);
   console.log("[ZyFAI] getPositions raw:", JSON.stringify(result, null, 2));
 
-  // Try every plausible shape
-  if (Array.isArray(result?.data)) {
-    return result.data.reduce((s, p) => s + (p.value ?? p.balance ?? p.amount ?? 0), 0);
+  // SDK wraps data in result.portfolio (shape: { totalBalance, totalBalanceUsdc, positions, ... })
+  const p = result?.portfolio;
+
+  // Sum an array of positions
+  if (Array.isArray(p?.positions)) {
+    const total = p.positions.reduce((s, pos) => s + (pos.value ?? pos.balance ?? pos.amount ?? pos.valueUsdc ?? 0), 0);
+    if (total > 0) return total;
   }
-  const n = result?.data?.total      ??
-            result?.data?.totalValue  ??
-            result?.total             ??
-            result?.totalValue        ??
-            result?.value             ??
-            (typeof result === "number" ? result : 0);
-  return typeof n === "number" && isFinite(n) ? n : 0;
+
+  // Scalar total fields (portfolio level)
+  const scalar =
+    p?.totalBalanceUsdc ??
+    p?.totalBalance      ??
+    p?.totalValue        ??
+    p?.total             ??
+    // Legacy / alternative shapes
+    result?.data?.total      ??
+    result?.data?.totalValue ??
+    result?.total            ??
+    result?.totalValue       ??
+    result?.value            ??
+    (Array.isArray(result?.data)
+      ? result.data.reduce((s, pos) => s + (pos.value ?? pos.balance ?? pos.amount ?? 0), 0)
+      : null);
+
+  if (typeof scalar === "number" && isFinite(scalar)) return scalar;
+  return 0;
 }
 
 /**
@@ -278,6 +296,41 @@ export async function getDailyApyHistory(smartWalletAddress, period = "30D") {
   const latest = entries[entries.length - 1].apy;
   // SDK returns decimal (0.143) — convert to percentage string
   return latest < 1 ? (latest * 100).toFixed(2) : Number(latest).toFixed(2);
+}
+
+/**
+ * Get the USDC + WETH balance of the ZyFAI Safe wallet on Base mainnet.
+ * Use this to show deposited balance immediately after deposit, before
+ * ZyFAI has allocated the funds to a yield strategy.
+ *
+ * @param {string} safeAddress - The Safe / smart wallet address
+ * @param {"USDC"|"WETH"} asset
+ * @returns {number} Human-readable balance (USD for USDC, ETH for WETH)
+ */
+export async function getSafeBalance(safeAddress, asset = "USDC") {
+  console.log(`[ZyFAI] getSafeBalance — safe: ${safeAddress}, asset: ${asset}`);
+  const client = createPublicClient({ chain: base, transport: http() });
+  if (asset === "WETH") {
+    const raw = await client.getBalance({ address: safeAddress });
+    const eth = Number(raw) / 1e18;
+    console.log(`[ZyFAI] getSafeBalance WETH: ${eth}`);
+    return eth;
+  }
+  // USDC
+  let raw = 0n;
+  try {
+    raw = await client.readContract({
+      address: USDC_ADDRESS,
+      abi: BALANCE_OF_ABI,
+      functionName: "balanceOf",
+      args: [safeAddress],
+    });
+  } catch (e) {
+    console.warn("[ZyFAI] getSafeBalance USDC readContract failed:", e.message);
+  }
+  const usdc = Number(raw) / 1e6;
+  console.log(`[ZyFAI] getSafeBalance USDC: ${usdc}`);
+  return usdc;
 }
 
 /**
