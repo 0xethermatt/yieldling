@@ -160,15 +160,60 @@ export async function depositToZyfai(amount, walletAddress, asset = "USDC", prov
     throw e;
   }
 
-  // Step 4.5 — for WETH deposits, wrap native ETH → WETH first
+  // Step 4.5 — for WETH deposits, check ETH balance then wrap native ETH → WETH
   if (asset === "WETH") {
-    console.log(`[ZyFAI] Step 4.5: wrapping ${amount} ETH → WETH on Base...`);
+    console.log(`[ZyFAI] Step 4.5: checking ETH balance before wrap...`);
+    const client = createPublicClient({ chain: base, transport: http() });
+
+    // 4.5a — check native ETH balance
+    let ethBalanceWei;
+    try {
+      ethBalanceWei = await client.getBalance({ address: walletAddress });
+    } catch (e) {
+      console.error("[ZyFAI] Step 4.5a ✗ getBalance failed:", e?.message);
+      throw new Error("Could not read ETH balance. Check your connection and try again.");
+    }
+    const amountWei = parseEther(amount.toString());
+    // Require deposit amount + ~0.0005 ETH buffer for gas
+    const gasBudgetWei = parseEther("0.0005");
+    console.log(`[ZyFAI] Step 4.5a: ETH balance ${Number(ethBalanceWei) / 1e18} ETH, need ${amount} ETH + gas`);
+    if (ethBalanceWei < amountWei + gasBudgetWei) {
+      const have = (Number(ethBalanceWei) / 1e18).toFixed(6);
+      const need = (Number(amountWei + gasBudgetWei) / 1e18).toFixed(6);
+      console.error(`[ZyFAI] Step 4.5a ✗ Insufficient ETH: have ${have}, need ${need}`);
+      throw new Error(`Insufficient ETH balance. You have ${have} ETH on Base but need at least ${need} ETH (deposit + gas).`);
+    }
+
+    // 4.5b — wrap ETH → WETH
+    console.log(`[ZyFAI] Step 4.5b: wrapping ${amount} ETH → WETH on Base...`);
     try {
       await wrapEthToWeth(amount, provider, walletAddress);
-      console.log("[ZyFAI] Step 4.5 ✓ ETH wrapped to WETH");
+      console.log("[ZyFAI] Step 4.5b ✓ ETH wrapped to WETH");
     } catch (e) {
-      console.error("[ZyFAI] Step 4.5 ✗ ETH wrap failed:", e?.message, e?.code);
-      throw e;
+      console.error("[ZyFAI] Step 4.5b ✗ ETH wrap failed:", e?.message, e?.code);
+      // Translate common provider errors into readable messages
+      if (e?.code === 4001 || e?.message?.includes("rejected") || e?.message?.includes("denied")) {
+        throw new Error("Transaction rejected. Please approve the ETH → WETH wrap in your wallet.");
+      }
+      if (e?.message?.includes("insufficient funds")) {
+        throw new Error("Insufficient ETH to cover the wrap transaction and gas fees.");
+      }
+      throw new Error(`ETH wrap failed: ${e?.message ?? "unknown error"}`);
+    }
+
+    // 4.5c — verify WETH balance landed (gives clearer error than depositFunds failing silently)
+    try {
+      const WETH_ABI = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }];
+      const wethBalance = await client.readContract({ address: WETH_ADDRESS, abi: WETH_ABI, functionName: "balanceOf", args: [walletAddress] });
+      console.log(`[ZyFAI] Step 4.5c: WETH balance after wrap: ${Number(wethBalance) / 1e18} WETH`);
+      if (wethBalance < amountWei) {
+        throw new Error(`WETH balance (${Number(wethBalance) / 1e18}) is less than deposit amount (${amount}). Wrap may not have settled yet — please retry.`);
+      }
+      console.log("[ZyFAI] Step 4.5c ✓ WETH balance confirmed");
+    } catch (e) {
+      if (e.message.startsWith("WETH balance")) throw e;
+      // Non-fatal — log and continue; depositFunds will fail with its own error if WETH isn't there
+      console.warn("[ZyFAI] Step 4.5c ⚠ WETH balance check failed (non-fatal):", e?.message);
     }
   }
 
@@ -187,6 +232,14 @@ export async function depositToZyfai(amount, walletAddress, asset = "USDC", prov
     console.log("[ZyFAI] Step 5 ✓ deposit complete:", JSON.stringify(result, null, 2));
   } catch (e) {
     console.error("[ZyFAI] Step 5 ✗ depositFunds failed:", e?.message, e?.code, e?.stack);
+    if (asset === "WETH") {
+      if (e?.message?.includes("allowance") || e?.message?.includes("approve")) {
+        throw new Error("WETH allowance issue — ZyFAI could not spend your WETH. This may resolve on retry.");
+      }
+      if (e?.message?.includes("insufficient") || e?.message?.includes("balance")) {
+        throw new Error(`Insufficient WETH balance for deposit. Make sure your wallet has at least ${amount} WETH on Base.`);
+      }
+    }
     throw e;
   }
 
