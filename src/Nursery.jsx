@@ -646,15 +646,19 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       try {
         const earnings = await getYieldEarned(smartWalletAddress);
         console.log("[Nursery] getYieldEarned raw:", JSON.stringify(earnings));
-        const raw  = earnings["USDC"] ?? earnings["usdc"] ?? earnings["WETH"] ?? earnings["weth"] ?? 0;
-        const val  = typeof raw === "number" ? raw : parseFloat(raw) || 0;
+        const raw = earnings["USDC"] ?? earnings["usdc"] ?? earnings["WETH"] ?? earnings["weth"] ?? 0;
+        const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
+        // Don't update until deposited is known — avoids race where yield fires
+        // before deposited fetch, making the cap useless.
+        if (!depositLoaded) return;
         // Sanity cap: yield can't exceed deposited × 200% APY × 1 year.
-        // If ZyFAI returns a stale/incorrect value larger than deposited, ignore it.
+        // ZyFAI sometimes returns stale/incorrect values for fresh accounts.
         const maxReasonable = deposited * 2;
-        if (val > 0 && (deposited === 0 || val <= maxReasonable)) {
+        if (val > 0 && val <= maxReasonable) {
           setYieldEarned(val);
-        } else if (val > maxReasonable) {
-          console.warn("[Nursery] getYieldEarned value looks wrong (> 2× deposited), ignoring:", val);
+        } else {
+          console.warn("[Nursery] ignoring unreasonable yield:", val, "deposited:", deposited);
+          setYieldEarned(0); // reset any previously-set bad value
         }
       } catch (err) {
         console.error("[Nursery] getYieldEarned failed:", err);
@@ -663,7 +667,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     poll();
     const iv = setInterval(poll, 30_000);
     return () => clearInterval(iv);
-  }, [smartWalletAddress]);
+  }, [smartWalletAddress, depositLoaded, deposited]);
   useEffect(() => {
     if (prevStageName && prevStageName !== stage.name) {
       setShowEvo(true);
