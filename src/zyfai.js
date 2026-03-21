@@ -119,11 +119,11 @@ export async function depositToZyfai(amount, walletAddress, asset = "USDC", prov
     ? String(parseEther(amount.toString()))   // BigInt → string
     : String(Math.round(amount * 1_000_000));
 
-  const tokenAddress = asset === "WETH" ? WETH_ADDRESS : USDC_ADDRESS;
-  console.log(`[ZyFAI] Step 5: depositing — ${amount} ${asset} = ${amountUnits} base units, tokenAddress: ${tokenAddress}`);
+  console.log(`[ZyFAI] Step 5: depositing — ${amount} ${asset} = ${amountUnits} base units`);
   let result;
   try {
-    result = await sdk.depositFunds(walletAddress, CHAIN_ID, amountUnits, { asset, tokenAddress });
+    // 4th arg is the asset string ("USDC" | "WETH") — SDK looks up the token address internally
+    result = await sdk.depositFunds(walletAddress, CHAIN_ID, amountUnits, asset);
     console.log("[ZyFAI] Step 5 ✓ deposit complete:", JSON.stringify(result, null, 2));
   } catch (e) {
     console.error("[ZyFAI] Step 5 ✗ depositFunds failed:", e?.message, e?.code, e?.stack);
