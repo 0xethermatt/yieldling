@@ -1,5 +1,28 @@
 import { useState, useEffect, useRef } from "react";
-import { getYieldEarned, withdrawYield } from "./zyfai.js";
+import {
+  depositToZyfai,
+  ensureSessionKey,
+  getYieldEarned,
+  getStrategyApy,
+  getConservativeOpportunities,
+  getAggressiveOpportunities,
+  getPositions,
+  withdrawYield,
+} from "./zyfai.js";
+const PET_NAME_KEY = "yieldling_pet_name";
+import stabby1 from "./assets/stabby-1.png";
+import stabby2 from "./assets/stabby-2.png";
+import stabby3 from "./assets/stabby-3.png";
+import stabby4 from "./assets/stabby-4.png";
+import volty1  from "./assets/volty-1.png";
+import volty2  from "./assets/volty-2.png";
+import volty3  from "./assets/volty-3.png";
+import volty4  from "./assets/volty-4.png";
+
+const CHAR_IMGS = {
+  stabby: [stabby1, stabby2, stabby3, stabby4],
+  volty:  [volty1,  volty2,  volty3,  volty4],
+};
 const fontLink = document.createElement("link");
 fontLink.rel = "stylesheet";
 fontLink.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Space+Mono:wght@400;700&family=Anybody:ital,wght@0,900;1,900&display=swap";
@@ -86,50 +109,59 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
   top: 0; left: 0; right: 0; height: 2px;
   border-radius: 16px 16px 0 0;
 }
-.stat-card.teal::before { background: var(--teal); }
+.stat-card.teal::before   { background: var(--teal); }
 .stat-card.purple::before { background: var(--purple); }
+.stat-card.dim::before    { background: rgba(238,240,248,.15); }
+.stat-card.wide { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; }
 .stat-lbl { font-size: 10px; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
+.stat-card.wide .stat-lbl { margin-bottom: 0; }
 .stat-val { font-family: var(--mono); font-size: 22px; font-weight: 700; }
-.stat-val.teal { color: var(--teal); }
+.stat-val.teal   { color: var(--teal); }
 .stat-val.purple { color: var(--purple); }
+.stat-val.white  { color: var(--text); }
 /* pet area */
 .pet-area {
   flex: 1; display: flex; flex-direction: column;
   align-items: center; justify-content: center;
-  padding: 8px 0; position: relative; min-height: 220px;
+  padding: 8px 0; position: relative; min-height: 260px;
 }
 .pet-glow {
-  position: absolute; width: 200px; height: 200px; border-radius: 50%;
+  position: absolute; width: 260px; height: 260px; border-radius: 50%;
   background: radial-gradient(circle, rgba(124,106,255,.18) 0%, transparent 70%);
   pointer-events: none;
 }
 .pet-glow.warn { background: radial-gradient(circle, rgba(255,215,106,.2) 0%, transparent 70%); }
 .pet-glow.danger { background: radial-gradient(circle, rgba(255,106,106,.2) 0%, transparent 70%); }
-.pet-emoji {
-  font-size: 110px; position: relative; z-index: 1;
-  cursor: pointer; user-select: none; line-height: 1;
-  animation: petbounce 2.4s ease-in-out infinite;
+.pet-img {
+  width: 180px; height: 180px; object-fit: contain;
+  position: relative; z-index: 1;
+  cursor: pointer; user-select: none; display: block;
+  animation: petFloat 2.5s ease-in-out infinite;
   transition: filter .4s;
   filter: drop-shadow(0 0 20px rgba(124,106,255,.5));
 }
-.pet-emoji.happy  { filter: drop-shadow(0 0 24px rgba(106,255,212,.6)); }
-.pet-emoji.anxious {
-  animation: shake .4s ease-in-out infinite;
-  filter: drop-shadow(0 0 24px rgba(255,215,106,.7));
+.pet-img.happy   { filter: drop-shadow(0 0 28px rgba(106,255,212,.65)); }
+.pet-img.anxious {
+  animation: petShakeAnxious .45s ease-in-out infinite;
+  filter: drop-shadow(0 0 28px rgba(255,215,106,.75));
 }
-.pet-emoji.danger {
-  animation: shake .22s ease-in-out infinite;
-  filter: drop-shadow(0 0 28px rgba(255,106,106,.8));
+.pet-img.danger  {
+  animation: petShakeDanger .2s ease-in-out infinite;
+  filter: drop-shadow(0 0 32px rgba(255,106,106,.85));
 }
-@keyframes petbounce {
-  0%,100%{transform:translateY(0) rotate(0deg)}
-  30%{transform:translateY(-12px) rotate(-2deg)}
-  60%{transform:translateY(-7px) rotate(2deg)}
+@keyframes petFloat {
+  0%,100% { transform: translateY(0); }
+  50%     { transform: translateY(-10px); }
 }
-@keyframes shake {
-  0%,100%{transform:translateX(0)}
-  25%{transform:translateX(-8px) rotate(-4deg)}
-  75%{transform:translateX(8px) rotate(4deg)}
+@keyframes petShakeAnxious {
+  0%,100% { transform: translateX(0) rotate(0deg); }
+  25%     { transform: translateX(-8px) rotate(-3deg); }
+  75%     { transform: translateX(8px) rotate(3deg); }
+}
+@keyframes petShakeDanger {
+  0%,100% { transform: translateX(0) rotate(0deg); }
+  25%     { transform: translateX(-11px) rotate(-5deg); }
+  75%     { transform: translateX(11px) rotate(5deg); }
 }
 /* sparkles */
 .sparkle {
@@ -180,10 +212,29 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 .need-btn:active { transform: scale(.94); }
 .need-btn.urgent { border-color: var(--pink); animation: urgentpulse 1.5s ease-in-out infinite; }
 @keyframes urgentpulse { 0%,100%{box-shadow:0 0 0 0 rgba(255,106,176,0)} 50%{box-shadow:0 0 0 4px rgba(255,106,176,.2)} }
-.need-icon { font-size: 26px; }
+.need-icon { font-size: 26px; transition: opacity .2s; }
 .need-label { font-size: 10px; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; }
 .need-bar { width: 100%; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; margin-top: 2px; }
 .need-bar-fill { height: 100%; border-radius: 2px; transition: width .5s ease; }
+/* loading / disabled states */
+.need-btn:disabled { opacity: .45; cursor: not-allowed; transform: none !important; }
+.need-btn.tapping  { border-color: var(--purple) !important; }
+.need-btn.tapping .need-icon { opacity: 0; }
+.need-spinner {
+  position: absolute; top: 50%; left: 50%; margin-top: -22px; margin-left: -11px;
+  width: 22px; height: 22px; border: 2.5px solid rgba(255,255,255,.15);
+  border-top-color: var(--purple); border-radius: 50%;
+  animation: spin .65s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+/* low-need pulse reminder */
+.need-btn.remind {
+  animation: needRemind 1.2s ease-in-out 3;
+}
+@keyframes needRemind {
+  0%,100% { box-shadow: 0 0 0 0 rgba(124,106,255,0); }
+  50%      { box-shadow: 0 0 0 6px rgba(124,106,255,.3); border-color: var(--purple); }
+}
 /* emotion pill */
 .emotion-area { display: flex; justify-content: center; padding: 0 16px 8px; flex-shrink: 0; }
 .emotion-pill {
@@ -217,6 +268,41 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
   border-radius: 20px; cursor: pointer; transition: all .2s;
 }
 .unwind-btn:hover { background: rgba(255,106,106,.08); color: #ff6a6a; border-color: #ff6a6a; }
+/* under the hood */
+.hood-row {
+  flex-shrink: 0; border-top: 1px solid var(--border);
+  margin: 0 16px 8px;
+}
+.hood-toggle {
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  background: none; border: none; color: var(--dim); font-family: var(--font);
+  font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: 1.5px;
+  padding: 10px 0 8px; cursor: pointer; transition: color .2s;
+}
+.hood-toggle:hover { color: var(--text); }
+.hood-chevron { transition: transform .3s; display: inline-block; }
+.hood-chevron.open { transform: rotate(180deg); }
+.hood-grid {
+  display: grid; grid-template-columns: 1fr 1fr;
+  gap: 8px; padding-bottom: 10px;
+}
+.hood-cell {
+  background: var(--surface2); border-radius: 10px;
+  padding: 10px 12px;
+}
+.hood-cell-lbl { font-size: 9px; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 4px; }
+.hood-cell-val { font-family: var(--mono); font-size: 13px; font-weight: 700; }
+/* protocol rows */
+.hood-section-lbl { font-size: 9px; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 8px; }
+.hood-protocol-row {
+  display: flex; align-items: center; justify-content: space-between;
+  background: var(--surface2); border-radius: 10px; padding: 10px 12px;
+  margin-bottom: 6px;
+}
+.hood-protocol-name { font-size: 12px; font-weight: 800; }
+.hood-protocol-token { font-size: 10px; color: var(--dim); font-weight: 700; margin-top: 2px; }
+.hood-protocol-apy { font-family: var(--mono); font-size: 14px; font-weight: 700; color: var(--teal); }
+.hood-meta { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
 /* evolution overlay */
 .evo-overlay {
   position: absolute; inset: 0; background: rgba(4,6,14,.94);
@@ -271,28 +357,36 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 const styleEl = document.createElement("style");
 styleEl.textContent = css;
 document.head.appendChild(styleEl);
-const EVOLUTIONS = [
-  { threshold: 0,   emoji: "🥚",  name: "Egg",      level: "LV. 1", next: "Hatchling" },
-  { threshold: 2,   emoji: "🐣",  name: "Hatchling", level: "LV. 2", next: "Pup" },
-  { threshold: 10,  emoji: "🐾",  name: "Pup",       level: "LV. 3", next: "Drake" },
-  { threshold: 30,  emoji: "🐲",  name: "Drake",     level: "LV. 4", next: "Dragon" },
-  { threshold: 80,  emoji: "🐉",  name: "Dragon",    level: "LV. 5", next: "Starborn" },
-  { threshold: 200, emoji: "⭐",  name: "Starborn",  level: "LV. 6", next: "MAX" },
+const STAGES = [
+  { threshold: 0,  stage: 1, name: "Newborn",  level: "LV. 1" },
+  { threshold: 1,  stage: 2, name: "Hatchling", level: "LV. 2" },
+  { threshold: 10, stage: 3, name: "Elder",     level: "LV. 3" },
+  { threshold: 50, stage: 4, name: "Legend",    level: "LV. 4" },
 ];
-function getEvo(y) {
-  let e = EVOLUTIONS[0];
-  for (const ev of EVOLUTIONS) { if (y >= ev.threshold) e = ev; }
-  return e;
+// Per-character micro-transaction amounts
+const TAP_CFG = {
+  stabby: { amount: 1,      asset: "USDC", floatLabel: "+$1",         toastLabel: "+$1 deposited"       },
+  volty:  { amount: 0.0005, asset: "WETH", floatLabel: "+0.0005 ETH", toastLabel: "+0.0005 ETH deposited" },
+};
+
+function getStage(y) {
+  let s = STAGES[0];
+  for (const st of STAGES) { if (y >= st.threshold) s = st; }
+  return s;
 }
-function getNextEvo(y) {
-  return EVOLUTIONS.find(e => e.threshold > y) || EVOLUTIONS[EVOLUTIONS.length - 1];
+function getNextStage(y) {
+  return STAGES.find(s => s.threshold > y) || STAGES[STAGES.length - 1];
 }
 function fmt(n) { return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-export default function Nursery({ walletAddress, smartWalletAddress }) {
-  const [yieldEarned, setYieldEarned] = useState(42.18);
+export default function Nursery({ walletAddress, smartWalletAddress, character = "stabby" }) {
+  const defaultName = character.charAt(0).toUpperCase() + character.slice(1);
+  const petName     = localStorage.getItem(PET_NAME_KEY)?.trim() || "";
+  const charName    = petName || defaultName;
+  const [yieldEarned, setYieldEarned] = useState(0);
+  const [deposited,   setDeposited]   = useState(0);
   const [petState, setPetState] = useState("ok");
   const [showEvo, setShowEvo] = useState(false);
-  const [prevEvoName, setPrevEvoName] = useState(null);
+  const [prevStageName, setPrevStageName] = useState(null);
   const [streak, setStreak] = useState(12);
   const [showToast, setShowToast] = useState(false);
   const [toastMsg, setToastMsg] = useState("");
@@ -300,15 +394,73 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
   const [xpFloats, setXpFloats] = useState([]);
   const [needs, setNeeds] = useState({ hunger: 72, mood: 88, energy: 55 });
   const [activeTab, setActiveTab] = useState("nursery");
+  const [hoodOpen, setHoodOpen] = useState(false);
+  const [currentApy, setCurrentApy] = useState(null);
+  const [opportunities, setOpportunities] = useState([]);
+  const [tapping, setTapping] = useState(null);      // "hunger"|"mood"|"energy"|null
+  const [reminding, setReminding] = useState({});    // keys currently pulsing
   const petRef = useRef(null);
   const sparkleId = useRef(0);
   const xpId = useRef(0);
-  const evo = getEvo(yieldEarned);
-  const nextEvo = getNextEvo(yieldEarned);
-  const xpPct = nextEvo.threshold === evo.threshold ? 100
-    : ((yieldEarned - evo.threshold) / (nextEvo.threshold - evo.threshold)) * 100;
-  const healthPct = petState === "ok" ? 85 : petState === "anxious" ? 44 : 20;
-  // Real yield polling — every 30s when a smart wallet is available
+  const sessionKeyReady = useRef(false);
+  const stage     = getStage(yieldEarned);
+  const nextStage = getNextStage(yieldEarned);
+  const xpPct     = nextStage.threshold === stage.threshold ? 100
+    : ((yieldEarned - stage.threshold) / (nextStage.threshold - stage.threshold)) * 100;
+  const charImg    = CHAR_IMGS[character]?.[stage.stage - 1] ?? CHAR_IMGS.stabby[0];
+  const accentRgb  = character === "volty" ? "255,106,176" : "106,255,212";
+  const accentHex  = character === "volty" ? "#ff6ab0" : "#6affd4";
+  const healthPct  = petState === "ok" ? 85 : petState === "anxious" ? 44 : 20;
+  // Fetch live protocol opportunities — character-specific, poll every 30s
+  useEffect(() => {
+    const fetchOpps = async () => {
+      try {
+        const fn   = character === "volty" ? getAggressiveOpportunities : getConservativeOpportunities;
+        const opps = await fn(8453);
+        if (opps.length) setOpportunities(opps);
+      } catch (err) {
+        console.error("[Nursery] fetchOpps failed:", err);
+      }
+    };
+    fetchOpps();
+    const iv = setInterval(fetchOpps, 30_000);
+    return () => clearInterval(iv);
+  }, [character]);
+
+  // Fetch strategy APY — public read, no wallet needed, poll every 60s
+  useEffect(() => {
+    const strategy = character === "volty" ? "aggressive"  : "conservative";
+    const asset    = character === "volty" ? "WETH"        : "USDC";
+    const fetchApy = async () => {
+      try {
+        const apy = await getStrategyApy(strategy, asset);
+        if (apy !== null) setCurrentApy(apy);
+      } catch (err) {
+        console.error("[Nursery] getStrategyApy failed:", err);
+      }
+    };
+    fetchApy();
+    const iv = setInterval(fetchApy, 60_000);
+    return () => clearInterval(iv);
+  }, [character]);
+
+  // Fetch deposited principal — poll every 60s
+  useEffect(() => {
+    if (!walletAddress) return;
+    const fetchDeposited = async () => {
+      try {
+        const val = await getPositions(walletAddress, 8453);
+        if (typeof val === "number" && isFinite(val) && val >= 0) setDeposited(val);
+      } catch (err) {
+        console.error("[Nursery] getPositions failed:", err);
+      }
+    };
+    fetchDeposited();
+    const iv = setInterval(fetchDeposited, 60_000);
+    return () => clearInterval(iv);
+  }, [walletAddress]);
+
+  // Fetch earned yield — poll every 30s when smart wallet is available
   useEffect(() => {
     if (!smartWalletAddress) return;
     const poll = async () => {
@@ -325,12 +477,12 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
     return () => clearInterval(iv);
   }, [smartWalletAddress]);
   useEffect(() => {
-    if (prevEvoName && prevEvoName !== evo.name) {
+    if (prevStageName && prevStageName !== stage.name) {
       setShowEvo(true);
-      toast(`🎉 Ziggy evolved into ${evo.name}!`);
+      toast(`🎉 ${charName} evolved into ${stage.name}!`);
     }
-    setPrevEvoName(evo.name);
-  }, [evo.name]);
+    setPrevStageName(stage.name);
+  }, [stage.name]);
   // deplete needs slowly
   useEffect(() => {
     const iv = setInterval(() => {
@@ -342,6 +494,22 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
     }, 800);
     return () => clearInterval(iv);
   }, []);
+  // Pulse reminder every 30s on buttons whose need bar is below 40
+  useEffect(() => {
+    const iv = setInterval(() => {
+      setNeeds(current => {
+        const low = {};
+        ["hunger","mood","energy"].forEach(k => { if (current[k] < 40) low[k] = true; });
+        if (Object.keys(low).length) {
+          setReminding(low);
+          setTimeout(() => setReminding({}), 3800); // 3 pulses × ~1.2s
+        }
+        return current; // no change to needs
+      });
+    }, 30_000);
+    return () => clearInterval(iv);
+  }, []);
+
   const toast = (msg) => {
     setToastMsg(msg); setShowToast(true);
     setTimeout(() => setShowToast(false), 3200);
@@ -358,17 +526,50 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
     setXpFloats(f => [...f, { id, x, y, val }]);
     setTimeout(() => setXpFloats(f => f.filter(p => p.id !== id)), 900);
   };
-  const handleNeed = (type) => {
-    const emojis = { hunger: "🍖", mood: "✨", energy: "⚡" };
-    const labels = { hunger: "Fed!", mood: "Happy!", energy: "Energised!" };
-    const gains  = { hunger: 30, mood: 20, energy: 25 };
-    setNeeds(n => ({ ...n, [type]: Math.min(100, n[type] + gains[type]) }));
-    toast(`${emojis[type]} ${labels[type]} +${gains[type]} XP`);
-    setYieldEarned(y => parseFloat((y + 0.05).toFixed(4)));
-    spawnXpFloat(195, 300, `+${gains[type]} XP`);
-    ["🌟","✨","💫"].forEach((e, i) => {
-      setTimeout(() => spawnSparkle(195 + (Math.random()-0.5)*80, 280, e), i * 120);
-    });
+  const handleNeed = async (type) => {
+    if (tapping !== null) return; // block double-tap
+    const cfg      = TAP_CFG[character] ?? TAP_CFG.stabby;
+    const emojis   = { hunger: "🍖", mood: "✨", energy: "⚡" };
+    const toastKey = { hunger: "Fed!", mood: "Played!", energy: "Rested!" };
+    const needGain = { hunger: 30, mood: 20, energy: 25 };
+
+    setTapping(type);
+    try {
+      // Ensure session key exists before first tap this session
+      if (walletAddress && !sessionKeyReady.current) {
+        await ensureSessionKey(walletAddress);
+        sessionKeyReady.current = true;
+      }
+
+      // On-chain deposit
+      if (walletAddress) {
+        await depositToZyfai(cfg.amount, walletAddress, cfg.asset);
+      }
+
+      // Refresh yield counter from chain
+      if (smartWalletAddress) {
+        try {
+          const earnings = await getYieldEarned(smartWalletAddress);
+          const val = earnings[cfg.asset] ?? earnings[cfg.asset.toLowerCase()] ?? 0;
+          setYieldEarned(val);
+        } catch (e) {
+          console.error("[Nursery] yield refresh failed:", e);
+        }
+      }
+
+      // Success — update needs bar, toast, floating label, sparkles
+      setNeeds(n => ({ ...n, [type]: Math.min(100, n[type] + needGain[type]) }));
+      toast(`${emojis[type]} ${toastKey[type]} ${cfg.toastLabel}`);
+      spawnXpFloat(195, 300, cfg.floatLabel);
+      ["🌟","✨","💫"].forEach((e, i) =>
+        setTimeout(() => spawnSparkle(195 + (Math.random()-0.5)*80, 280, e), i * 120)
+      );
+    } catch (err) {
+      console.error("[Nursery] tap failed:", err);
+      toast("❌ Transaction failed — try again");
+    } finally {
+      setTapping(null);
+    }
   };
   const handlePetTap = () => {
     if (petState !== "ok") return;
@@ -377,7 +578,7 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
     spawnSparkle(215, 270, "⭐");
     spawnXpFloat(195, 270, "+5 XP");
     setYieldEarned(y => parseFloat((y + 0.02).toFixed(4)));
-    toast("💜 Ziggy loves you! +5 XP");
+    toast(`💜 ${charName} loves you! +5 XP`);
   };
   const handleUnwind = async () => {
     setPetState("anxious");
@@ -417,10 +618,12 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
         {/* Top Bar */}
         <div className="topbar">
           <div className="topbar-left">
-            <div className="avatar">{evo.emoji}</div>
+            <div className="avatar" style={{ borderColor: accentHex, boxShadow: `0 0 12px rgba(${accentRgb},.35)` }}>
+              <img src={charImg} alt={charName} style={{ width:"100%", height:"100%", objectFit:"contain" }} />
+            </div>
             <div>
-              <div className="topbar-name">Yieldling</div>
-              <div className="topbar-level">ZIGGY · {evo.level}</div>
+              <div className="topbar-name" style={{ color: accentHex }}>{charName}</div>
+              <div className="topbar-level">{defaultName.toUpperCase()} · {stage.level}</div>
             </div>
           </div>
           <div className="streak-pill">🔥 <span className="streak-count">{streak}</span></div>
@@ -432,16 +635,33 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
             <div className="stat-val teal">${fmt(yieldEarned)}</div>
           </div>
           <div className="stat-card purple">
-            <div className="stat-lbl">Current APY</div>
-            <div className="stat-val purple">18.4%</div>
+            <div className="stat-lbl">ZyFAI Best Rate</div>
+            <div className="stat-val purple">
+              {currentApy !== null ? `${parseFloat(currentApy).toFixed(1)}%` : "—"}
+            </div>
+          </div>
+          <div className="stat-card dim wide">
+            <div className="stat-lbl">Deposited</div>
+            <div className="stat-val white">${fmt(deposited)}</div>
           </div>
         </div>
         {/* Pet */}
         <div className="pet-area">
-          <div className={`pet-glow ${petState !== "ok" ? petState : ""}`} />
-          <div ref={petRef} className={`pet-emoji ${petState !== "ok" ? petState : "happy"}`} onClick={handlePetTap}>
-            {evo.emoji}
-          </div>
+          <div
+            className={`pet-glow ${petState !== "ok" ? petState : ""}`}
+            style={petState === "ok" ? { background: `radial-gradient(circle, rgba(${accentRgb},.2) 0%, transparent 70%)` } : {}}
+          />
+          <img
+            ref={petRef}
+            className={`pet-img ${petState !== "ok" ? petState : ""}`}
+            src={charImg}
+            alt={charName}
+            onClick={handlePetTap}
+            style={petState === "ok" ? {
+              filter: `drop-shadow(0 0 32px rgba(${accentRgb},.7))`,
+              animation: "petFloat 2.5s ease-in-out infinite"
+            } : {}}
+          />
         </div>
         {/* Status Bars */}
         <div className="bars-area">
@@ -465,35 +685,88 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
         {/* Emotion Pill */}
         <div className="emotion-area">
           <div className={`emotion-pill ${petState === "ok" ? "ep-ok" : petState === "anxious" ? "ep-warn" : "ep-bad"}`}>
-            {petState === "ok" ? "😊 Thriving" : petState === "anxious" ? "😰 Stressed — protecting…" : "😵 Auto-unwinding…"}
+            {petState === "ok" ? "😊 Thriving" : petState === "anxious" ? "😰 ZyFAI rebalancing…" : "😵 Withdrawing funds…"}
           </div>
         </div>
         {/* Pet Name + XP */}
         <div className="pet-meta">
           <div className="pet-name-row">
-            <div className="pet-name">Ziggy</div>
-            <div className="pet-xp">{fmt(yieldEarned)} / {nextEvo.threshold} XP</div>
+            <div className="pet-name">{charName}</div>
+            <div className="pet-xp">{fmt(yieldEarned)} / {nextStage.threshold} XP</div>
           </div>
           <div className="xp-track">
-            <div className="xp-fill" style={{ width: `${Math.min(xpPct, 100)}%` }} />
+            <div className="xp-fill" style={{ width: `${Math.min(xpPct, 100)}%`, background: `linear-gradient(90deg, var(--purple), ${accentHex})` }} />
           </div>
-          <div className="next-evo">Next Evolution: {nextEvo.name}</div>
+          <div className="next-evo" style={{ color: accentHex }}>Next Evolution: {nextStage.name}</div>
         </div>
         {/* Needs */}
         <div className="needs">
-          {needConfig.map(({ key, icon, label, color }) => (
-            <button key={key} className={`need-btn ${needs[key] < 30 ? "urgent" : ""}`} onClick={() => handleNeed(key)}>
-              <div className="need-icon">{icon}</div>
-              <div className="need-label">{label}</div>
-              <div className="need-bar">
-                <div className="need-bar-fill" style={{ width: `${needs[key]}%`, background: color }} />
-              </div>
-            </button>
-          ))}
+          {needConfig.map(({ key, icon, label, color }) => {
+            const isThisTapping = tapping === key;
+            const isDisabled    = tapping !== null;
+            const isUrgent      = needs[key] < 30 && !isDisabled;
+            const isReminding   = reminding[key] && !isDisabled;
+            return (
+              <button
+                key={key}
+                className={[
+                  "need-btn",
+                  isUrgent    ? "urgent"  : "",
+                  isThisTapping ? "tapping" : "",
+                  isReminding ? "remind"  : "",
+                ].filter(Boolean).join(" ")}
+                disabled={isDisabled}
+                onClick={() => handleNeed(key)}
+                style={{ position: "relative" }}
+              >
+                {isThisTapping && <span className="need-spinner" />}
+                <div className="need-icon">{icon}</div>
+                <div className="need-label">{label}</div>
+                <div className="need-bar">
+                  <div className="need-bar-fill" style={{ width: `${needs[key]}%`, background: color }} />
+                </div>
+              </button>
+            );
+          })}
         </div>
         {/* Emergency Unwind */}
         <div className="unwind-row">
-          <button className="unwind-btn" onClick={handleUnwind}>⚠ Emergency Unwind</button>
+          <button className="unwind-btn" onClick={handleUnwind}>⚠ Emergency Withdraw</button>
+        </div>
+        {/* Under the Hood */}
+        <div className="hood-row">
+          <button className="hood-toggle" onClick={() => setHoodOpen(o => !o)}>
+            <span>🔧 Under the Hood</span>
+            <span className={`hood-chevron ${hoodOpen ? "open" : ""}`}>▼</span>
+          </button>
+          {hoodOpen && (
+            <div>
+              <div className="hood-section-lbl">Top Active Routes</div>
+              {opportunities.length > 0 ? opportunities.map((opp, i) => (
+                <div className="hood-protocol-row" key={i}>
+                  <div>
+                    <div className="hood-protocol-name">{opp.protocol}</div>
+                    {opp.token && <div className="hood-protocol-token">{opp.token}</div>}
+                  </div>
+                  <div className="hood-protocol-apy">{opp.apy}%</div>
+                </div>
+              )) : (
+                <div className="hood-protocol-row">
+                  <div className="hood-protocol-name" style={{ color: "var(--dim)" }}>Loading routes…</div>
+                </div>
+              )}
+              <div className="hood-meta">
+                <div className="hood-cell">
+                  <div className="hood-cell-lbl">Auto-Compound</div>
+                  <div className="hood-cell-val" style={{ color: "var(--teal)" }}>On ✓</div>
+                </div>
+                <div className="hood-cell">
+                  <div className="hood-cell-lbl">Network</div>
+                  <div className="hood-cell-val" style={{ color: "var(--purple)" }}>Base</div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
         {/* Bottom Nav */}
         <div className="bottom-nav">
@@ -519,9 +792,10 @@ export default function Nursery({ walletAddress, smartWalletAddress }) {
                 }} />;
               })}
             </div>
-            <div className="evo-pet">{evo.emoji}</div>
+            <img className="evo-pet" src={charImg} alt={charName}
+              style={{ width: 120, height: 120, objectFit: "contain" }} />
             <div className="evo-title">EVOLVED!</div>
-            <div className="evo-sub">Ziggy became a <strong>{evo.name}</strong>! 🎉<br />Your Yieldling hit the ${evo.threshold} milestone.</div>
+            <div className="evo-sub">{charName} became a <strong>{stage.name}</strong>! 🎉<br />Your Yieldling hit the ${stage.threshold} yield milestone.</div>
             <button className="evo-close" onClick={() => setShowEvo(false)}>Keep Growing →</button>
           </div>
         )}

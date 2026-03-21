@@ -1,58 +1,19 @@
 import { ZyfaiSDK } from "@zyfai/sdk";
-import {
-  createWalletClient,
-  createPublicClient,
-  custom,
-  http,
-  parseEther,
-  parseUnits,
-} from "viem";
+import { createPublicClient, http, parseEther } from "viem";
 import { baseSepolia } from "viem/chains";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const CHAIN_ID = 84532; // Base Sepolia (switch to 8453 for mainnet)
 
-/** YieldPetTreasury deployed on Base Sepolia */
-const TREASURY_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS;
+// USDC on Base Sepolia
+const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
 
-/** wstETH on Base Sepolia */
-const WSTETH_ADDRESS = "0x13e5FB0B6534BB22cBC59Fae339dbBE0Dc906871";
-
-// ── Minimal ABIs ──────────────────────────────────────────────────────────────
-
-const ERC20_ABI = [
-  {
-    name: "approve",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [
-      { name: "spender", type: "address" },
-      { name: "amount",  type: "uint256" },
-    ],
-    outputs: [{ type: "bool" }],
-  },
-  {
-    name: "allowance",
-    type: "function",
-    stateMutability: "view",
-    inputs: [
-      { name: "owner",   type: "address" },
-      { name: "spender", type: "address" },
-    ],
-    outputs: [{ type: "uint256" }],
-  },
-];
-
-const TREASURY_ABI = [
-  {
-    name: "deposit",
-    type: "function",
-    stateMutability: "nonpayable",
-    inputs: [{ name: "amount", type: "uint256" }],
-    outputs: [],
-  },
-];
+const BALANCE_OF_ABI = [{
+  name: "balanceOf", type: "function", stateMutability: "view",
+  inputs:  [{ name: "account", type: "address" }],
+  outputs: [{ type: "uint256" }],
+}];
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -62,41 +23,22 @@ function createSdk() {
   });
 }
 
-/**
- * Build viem wallet + public clients from window.ethereum.
- * Returns { walletClient, publicClient }.
- */
-function createViemClients() {
-  const walletClient = createWalletClient({
-    chain: baseSepolia,
-    transport: custom(window.ethereum),
-  });
-  const publicClient = createPublicClient({
-    chain: baseSepolia,
-    transport: http(),
-  });
-  return { walletClient, publicClient };
-}
-
 // ── Exported functions ────────────────────────────────────────────────────────
 
 /**
- * Deposit into BOTH the ZyFAI yield strategy AND the YieldPetTreasury contract.
+ * Deposit into the ZyFAI AI-optimised yield strategy.
  *
- * Flow:
- *   1. ZyFAI SDK — deploy Safe if needed, create session key, deposit USDC
- *      into the automated wstETH looping strategy.
- *   2. viem — approve wstETH spend on YieldPetTreasury, then call deposit()
- *      to record the principal on-chain for yield enforcement.
+ * ZyFAI automatically routes funds across the best DeFi protocols on Base —
+ * no manual strategy selection, no manual rebalancing.
  *
- * @param {number} amount        - Human-readable USDC amount (e.g. 100 = 100 USDC)
- * @param {string} walletAddress - User's EOA wallet address
- * @returns {{ zyfai: object, treasury: string }} tx hashes for both legs
+ * @param {number} amount           - Human-readable amount (e.g. 100 = 100 USDC, 0.05 = 0.05 WETH)
+ * @param {string} walletAddress    - User's EOA wallet address
+ * @param {"USDC"|"WETH"} asset     - Asset to deposit (default: "USDC")
+ * @returns {{ zyfai: object, smartWallet: string }}
  */
-export async function depositToZyfai(amount, walletAddress) {
-  console.log(`[deposit] amount: ${amount} USDC, wallet: ${walletAddress}`);
+export async function depositToZyfai(amount, walletAddress, asset = "USDC") {
+  console.log(`[ZyFAI] depositToZyfai — amount: ${amount} ${asset}, wallet: ${walletAddress}`);
 
-  // ── Leg 1: ZyFAI SDK ───────────────────────────────────────────────────────
   const sdk = createSdk();
   await sdk.connectAccount(window.ethereum, CHAIN_ID);
 
@@ -104,78 +46,43 @@ export async function depositToZyfai(amount, walletAddress) {
   console.log(`[ZyFAI] Smart wallet: ${wallet.address}, deployed: ${wallet.isDeployed}`);
 
   if (!wallet.isDeployed) {
-    console.log("[ZyFAI] Deploying Safe...");
+    console.log("[ZyFAI] Deploying smart wallet...");
     await sdk.deploySafe(walletAddress, CHAIN_ID, "conservative");
   }
 
   await sdk.createSessionKey(walletAddress, CHAIN_ID);
   const user = await sdk.getUserDetails();
   if (!user.hasActiveSessionKey) {
-    console.log("[ZyFAI] Session key not active, retrying...");
+    console.log("[ZyFAI] Session key not active — retrying...");
     await sdk.createSessionKey(walletAddress, CHAIN_ID);
     const retry = await sdk.getUserDetails();
     if (!retry.hasActiveSessionKey) {
-      throw new Error("[ZyFAI] Session key activation failed. Contact support.");
+      throw new Error("[ZyFAI] Session key activation failed. Please try again.");
     }
   }
 
-  // USDC = 6 decimals
-  const usdcUnits = String(Math.round(amount * 1_000_000));
-  console.log(`[ZyFAI] Depositing ${usdcUnits} USDC units...`);
-  const zyfaiResult = await sdk.depositFunds(walletAddress, CHAIN_ID, usdcUnits);
-  console.log("[ZyFAI] Deposit complete:", zyfaiResult);
+  // USDC = 6 decimals, WETH = 18 decimals
+  const amountUnits = asset === "WETH"
+    ? parseEther(amount.toString())
+    : String(Math.round(amount * 1_000_000));
+
+  console.log(`[ZyFAI] Depositing ${amountUnits} ${asset} units...`);
+  const result = await sdk.depositFunds(walletAddress, CHAIN_ID, amountUnits, { asset });
+  console.log("[ZyFAI] Deposit complete:", result);
+
   await sdk.disconnectAccount();
 
-  // ── Leg 2: YieldPetTreasury via viem ──────────────────────────────────────
-  // wstETH = 18 decimals; treat the USDC amount as equivalent wstETH units for
-  // principal tracking purposes (swap conversion handled off-chain by ZyFAI).
-  const wstEthAmount = parseEther(amount.toString());
-  const { walletClient, publicClient } = createViemClients();
-  const [account] = await walletClient.getAddresses();
-
-  // Check existing allowance; only approve if needed
-  const allowance = await publicClient.readContract({
-    address: WSTETH_ADDRESS,
-    abi: ERC20_ABI,
-    functionName: "allowance",
-    args: [account, TREASURY_ADDRESS],
-  });
-
-  if (allowance < wstEthAmount) {
-    console.log("[Treasury] Approving wstETH spend...");
-    const approveTx = await walletClient.writeContract({
-      address: WSTETH_ADDRESS,
-      abi: ERC20_ABI,
-      functionName: "approve",
-      args: [TREASURY_ADDRESS, wstEthAmount],
-      account,
-    });
-    await publicClient.waitForTransactionReceipt({ hash: approveTx });
-    console.log("[Treasury] Approval confirmed:", approveTx);
-  }
-
-  console.log("[Treasury] Calling deposit()...");
-  const depositTx = await walletClient.writeContract({
-    address: TREASURY_ADDRESS,
-    abi: TREASURY_ABI,
-    functionName: "deposit",
-    args: [wstEthAmount],
-    account,
-  });
-  await publicClient.waitForTransactionReceipt({ hash: depositTx });
-  console.log("[Treasury] deposit() confirmed:", depositTx);
-
   return {
-    zyfai:    zyfaiResult,           // { success, txHash, smartWallet, amount }
-    treasury: depositTx,             // on-chain tx hash
-    smartWallet: zyfaiResult.smartWallet,
+    zyfai: result,
+    smartWallet: result.smartWallet,
   };
 }
 
 /**
- * Fetch total yield earned for a ZyFAI smart wallet (cached).
+ * Fetch total yield earned for a ZyFAI smart wallet.
  *
- * @param {string} smartWalletAddress - The Safe/subaccount address (NOT the EOA)
+ * @param {string} smartWalletAddress - The smart wallet address (NOT the EOA)
+ * @returns {object} Earnings keyed by token, e.g. { "USDC": 12.50, "WETH": 0.002 }
  */
 export async function getYieldEarned(smartWalletAddress) {
   console.log(`[ZyFAI] getYieldEarned — smartWallet: ${smartWalletAddress}`);
@@ -183,16 +90,238 @@ export async function getYieldEarned(smartWalletAddress) {
   const earnings = await sdk.getOnchainEarnings(smartWalletAddress);
   const byToken = earnings.data.totalEarningsByToken;
   console.log("[ZyFAI] Earnings by token:", byToken);
-  // e.g. { "USDC": 150.50, "WETH": 0.05 }
   return byToken;
 }
 
+// ── Shared helper: normalise an opportunities array from the SDK ──────────────
+function normaliseOpps(result) {
+  const entries = Array.isArray(result?.data) ? result.data
+    : Array.isArray(result) ? result : [];
+  return entries
+    .map(e => ({
+      protocol: e.protocol ?? e.name ?? "Unknown",
+      token:    e.token   ?? e.asset ?? "",
+      apy:      (() => { const n = parseFloat(e.apy ?? 0); return n < 1 ? (n * 100).toFixed(2) : n.toFixed(2); })(),
+    }))
+    .sort((a, b) => parseFloat(b.apy) - parseFloat(a.apy))
+    .slice(0, 3);
+}
+
 /**
- * Withdraw USDC yield from a ZyFAI account back to the user's EOA.
- * Omit amount to withdraw everything.
+ * Fetch the top conservative yield opportunities on Base mainnet.
+ * No wallet connection required — public read-only call.
+ *
+ * @param {number} [chainId=8453]
+ * @returns {Array<{ protocol: string, token: string, apy: string }>}
+ */
+export async function getConservativeOpportunities(chainId = 8453) {
+  console.log(`[ZyFAI] getConservativeOpportunities — chainId: ${chainId}`);
+  const sdk = createSdk();
+  const result = await sdk.getConservativeOpportunities(chainId);
+  console.log("[ZyFAI] Conservative opportunities:", result);
+  return normaliseOpps(result);
+}
+
+/**
+ * Fetch the top aggressive yield opportunities on Base mainnet.
+ * No wallet connection required — public read-only call.
+ *
+ * @param {number} [chainId=8453]
+ * @returns {Array<{ protocol: string, token: string, apy: string }>}
+ */
+export async function getAggressiveOpportunities(chainId = 8453) {
+  console.log(`[ZyFAI] getAggressiveOpportunities — chainId: ${chainId}`);
+  const sdk = createSdk();
+  const result = await sdk.getAggressiveOpportunities(chainId);
+  console.log("[ZyFAI] Aggressive opportunities:", result);
+  return normaliseOpps(result);
+}
+
+/**
+ * Fetch the current positions / total deposited value for a wallet.
+ * No wallet connection required — public read-only call.
+ *
+ * @param {string} walletAddress
+ * @param {number} [chainId=8453]
+ * @returns {number} Total deposited value in USD, or 0 on failure
+ */
+export async function getPositions(walletAddress, chainId = 8453) {
+  console.log(`[ZyFAI] getPositions — wallet: ${walletAddress}, chainId: ${chainId}`);
+  const sdk = createSdk();
+  const result = await sdk.getPositions(walletAddress, chainId);
+  console.log("[ZyFAI] getPositions raw:", JSON.stringify(result, null, 2));
+
+  // Try every plausible shape
+  if (Array.isArray(result?.data)) {
+    return result.data.reduce((s, p) => s + (p.value ?? p.balance ?? p.amount ?? 0), 0);
+  }
+  const n = result?.data?.total      ??
+            result?.data?.totalValue  ??
+            result?.total             ??
+            result?.totalValue        ??
+            result?.value             ??
+            (typeof result === "number" ? result : 0);
+  return typeof n === "number" && isFinite(n) ? n : 0;
+}
+
+/**
+ * Fetch the most recent APY from daily history for a ZyFAI smart wallet.
+ *
+ * @param {string} smartWalletAddress - The smart wallet address
+ * @param {string} [period="30D"]     - History window ("7D" | "30D" | "90D")
+ * @returns {string|null} APY percentage string e.g. "14.30", or null on error
+ */
+export async function getDailyApyHistory(smartWalletAddress, period = "30D") {
+  console.log(`[ZyFAI] getDailyApyHistory — smartWallet: ${smartWalletAddress}, period: ${period}`);
+  const sdk = createSdk();
+  const result = await sdk.getDailyApyHistory(smartWalletAddress, period);
+  console.log("[ZyFAI] APY history:", result);
+  const entries = result?.data ?? [];
+  if (!entries.length) return null;
+  const latest = entries[entries.length - 1].apy;
+  // SDK returns decimal (0.143) — convert to percentage string
+  return latest < 1 ? (latest * 100).toFixed(2) : Number(latest).toFixed(2);
+}
+
+/**
+ * Check the ETH and USDC balance of an address on Base Sepolia.
+ * Used to gate embedded-wallet users until they've funded their wallet.
+ *
+ * @param {string} address - Wallet address to check
+ * @returns {{ eth: bigint, usdc: bigint }}
+ */
+export async function checkWalletBalance(address) {
+  const client = createPublicClient({ chain: baseSepolia, transport: http() });
+  const eth = await client.getBalance({ address });
+  let usdc = 0n;
+  try {
+    usdc = await client.readContract({
+      address: USDC_ADDRESS,
+      abi: BALANCE_OF_ABI,
+      functionName: "balanceOf",
+      args: [address],
+    });
+  } catch (e) {
+    console.warn("[ZyFAI] USDC balanceOf failed:", e.message);
+  }
+  console.log(`[ZyFAI] Balance — ETH: ${eth}, USDC: ${usdc}`);
+  return { eth, usdc };
+}
+
+/**
+ * Ensure an active ZyFAI session key exists for walletAddress.
+ * Call this proactively so subsequent depositToZyfai() calls don't require
+ * extra wallet popups.
  *
  * @param {string} walletAddress - User's EOA wallet address
- * @param {number|undefined} amount - Human-readable USDC amount, or undefined for full withdrawal
+ */
+export async function ensureSessionKey(walletAddress) {
+  console.log(`[ZyFAI] ensureSessionKey — wallet: ${walletAddress}`);
+  const sdk = createSdk();
+  await sdk.connectAccount(window.ethereum, CHAIN_ID);
+  const wallet = await sdk.getSmartWalletAddress(walletAddress, CHAIN_ID);
+  if (!wallet.isDeployed) {
+    await sdk.deploySafe(walletAddress, CHAIN_ID, "conservative");
+  }
+  const user = await sdk.getUserDetails();
+  if (!user.hasActiveSessionKey) {
+    await sdk.createSessionKey(walletAddress, CHAIN_ID);
+    console.log("[ZyFAI] Session key created.");
+  } else {
+    console.log("[ZyFAI] Session key already active.");
+  }
+  await sdk.disconnectAccount();
+}
+
+/**
+ * Fetch the total value locked (TVL) across all ZyFAI vaults.
+ * Uses a direct REST call — no SDK or wallet connection required.
+ *
+ * Response shape: { tvl: { WETH: number, USDC: number, ... }, total: number }
+ *
+ * @returns {number} TVL in USD (e.g. 8888828), or 0 on failure
+ */
+export async function getTvl() {
+  console.log("[ZyFAI] getTvl — fetching from REST API...");
+  const res  = await fetch("https://api.zyf.ai/api/v1/data/usd-tvl");
+  const data = await res.json();
+  console.log("[ZyFAI] getTvl response:", data);
+  const n = data?.total ?? 0;
+  console.log("[ZyFAI] getTvl total:", n);
+  return typeof n === "number" && isFinite(n) ? n : 0;
+}
+
+/**
+ * Fetch the average APY for a specific ZyFAI strategy and asset.
+ * No wallet connection required — public read-only call.
+ *
+ * @param {"conservative"|"aggressive"} strategy
+ * @param {"USDC"|"WETH"} asset
+ * @returns {number|null} APY as a percentage (e.g. 7.2), or null on failure
+ */
+export async function getStrategyApy(strategy, asset) {
+  console.log(`[ZyFAI] getStrategyApy — strategy: ${strategy}, asset: ${asset}`);
+  const sdk = createSdk();
+  const result = await sdk.getAPYPerStrategy(false, 7, strategy, 8453, asset);
+  console.log(`[ZyFAI] getStrategyApy(${strategy}, ${asset}) raw:`, result);
+  const raw = result?.data?.[0]?.average_apy ?? null;
+  if (raw === null || raw === undefined) return null;
+  const n = parseFloat(raw);
+  if (!isFinite(n)) return null;
+  // Normalise: SDK may return decimal (0.072) or percent (7.2)
+  return n < 1 ? n * 100 : n;
+}
+
+/**
+ * Fetch the average APY across ZyFAI conservative opportunities on Base mainnet.
+ * No wallet connection required — public read-only call.
+ *
+ * @returns {number|null} Average APY as a percentage (e.g. 11.8), or null on failure
+ */
+export async function getAvgApy() {
+  console.log("[ZyFAI] getAvgApy — fetching...");
+  const sdk = createSdk();
+  const raw = await sdk.getConservativeOpportunities(8453);
+  // Log the FULL raw response so we can see exactly what shape it is
+  console.log("[ZyFAI] getAvgApy raw response:", JSON.stringify(raw, null, 2));
+
+  // Try every plausible array location
+  const entries =
+    Array.isArray(raw?.data)         ? raw.data         :
+    Array.isArray(raw?.opportunities) ? raw.opportunities :
+    Array.isArray(raw?.results)       ? raw.results       :
+    Array.isArray(raw)                ? raw               :
+    [];
+
+  console.log("[ZyFAI] getAvgApy entries count:", entries.length);
+  if (!entries.length) return null;
+
+  // Each entry's apy field may be a decimal (0.118) or already a percent (11.8)
+  const apyValues = entries
+    .map(e => {
+      const raw = e.apy ?? e.APY ?? e.apyPercent ?? null;
+      if (raw === null || raw === undefined) return null;
+      const n = parseFloat(raw);
+      if (!isFinite(n)) return null;
+      // Normalise: if < 1 it's a decimal fraction → multiply by 100
+      return n < 1 ? n * 100 : n;
+    })
+    .filter(n => n !== null);
+
+  console.log("[ZyFAI] getAvgApy normalised APY values:", apyValues);
+  if (!apyValues.length) return null;
+
+  const avg = apyValues.reduce((s, v) => s + v, 0) / apyValues.length;
+  console.log("[ZyFAI] getAvgApy result:", avg);
+  return avg;
+}
+
+/**
+ * Withdraw funds from a ZyFAI account back to the user's EOA.
+ * Omit amount to withdraw everything.
+ *
+ * @param {string} walletAddress    - User's EOA wallet address
+ * @param {number} [amount]         - Human-readable USDC amount, or omit for full withdrawal
  */
 export async function withdrawYield(walletAddress, amount) {
   console.log(`[ZyFAI] withdrawYield — wallet: ${walletAddress}, amount: ${amount ?? "all"}`);

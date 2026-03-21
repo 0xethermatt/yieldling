@@ -1,6 +1,21 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import NurseryScreen from "./Nursery.jsx";
-import { depositToZyfai } from "./zyfai.js";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { depositToZyfai, checkWalletBalance, getTvl, getAvgApy, getStrategyApy } from "./zyfai.js";
+import stabby1 from "./assets/stabby-1.png";
+import stabby2 from "./assets/stabby-2.png";
+import stabby3 from "./assets/stabby-3.png";
+import stabby4 from "./assets/stabby-4.png";
+import volty1  from "./assets/volty-1.png";
+import volty2  from "./assets/volty-2.png";
+import volty3  from "./assets/volty-3.png";
+import volty4  from "./assets/volty-4.png";
+
+const CHAR_IMGS = {
+  stabby: [stabby1, stabby2, stabby3, stabby4],
+  volty:  [volty1,  volty2,  volty3,  volty4],
+};
+const EVO_LABELS = ["$0", "$1", "$10", "$50"];
 // ── Fonts injected globally ──────────────────────────────────────────────────
 const fontLink = document.createElement("link");
 fontLink.rel = "stylesheet";
@@ -55,7 +70,33 @@ const css = `
     background: linear-gradient(135deg, var(--accent), var(--accent2));
     border: none; color: #fff; padding: 8px 18px; border-radius: 20px;
     font-family: var(--font); font-size: 13px; font-weight: 800; cursor: pointer;
+    transition: all .2s;
   }
+  .nav-wallet:hover { opacity: .88; transform: translateY(-1px); }
+  .nav-wallet.addr {
+    background: rgba(124,106,255,.15); border: 1px solid rgba(124,106,255,.35);
+    color: var(--accent);
+  }
+  /* connect gate */
+  .gate-wrap {
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    min-height: 100vh; padding: 100px 24px 60px; text-align: center;
+    position: relative; z-index: 1;
+  }
+  .gate-icon { font-size: 72px; margin-bottom: 24px; animation: float 3s ease-in-out infinite; }
+  .gate-h2 {
+    font-size: 28px; font-weight: 900; margin-bottom: 10px;
+    font-family: 'Anybody', var(--font); font-style: italic;
+  }
+  .gate-sub { color: var(--dim); font-size: 15px; font-weight: 600; max-width: 320px; line-height: 1.6; margin-bottom: 32px; }
+  .gate-btn {
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; color: #fff; font-family: var(--font);
+    font-size: 16px; font-weight: 900; padding: 16px 40px;
+    border-radius: 50px; cursor: pointer;
+    box-shadow: 0 8px 32px rgba(124,106,255,.4); transition: all .3s;
+  }
+  .gate-btn:hover { transform: translateY(-3px); box-shadow: 0 16px 48px rgba(124,106,255,.5); }
   /* ── SCREENS ── */
   .screen { min-height: 100vh; padding-top: 70px; position: relative; }
   /* starfield */
@@ -128,13 +169,17 @@ const css = `
   }
   .hero-cta:hover { transform: translateY(-3px); box-shadow: 0 16px 48px rgba(124,106,255,.5); }
   .hero-stats {
-    display: flex; gap: 48px; margin-top: 64px; flex-wrap: wrap;
-    justify-content: center; position: relative; z-index: 1;
+    display: flex; gap: clamp(32px, 8vw, 96px); margin-top: 64px;
+    flex-wrap: wrap; justify-content: center; position: relative; z-index: 1;
   }
   .hero-stat .val {
     font-size: 28px; font-weight: 900;
     background: linear-gradient(135deg, var(--accent3), var(--accent));
     -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+    transition: opacity .3s;
+  }
+  .hero-stat .val.loading {
+    opacity: .35;
   }
   .hero-stat .lbl {
     font-size: 11px; color: var(--dim); font-weight: 700;
@@ -337,41 +382,257 @@ const css = `
     animation: pfly 1.6s ease-out forwards;
   }
   @keyframes pfly { 0%{transform:translate(0,0) scale(1);opacity:1} 100%{transform:translate(var(--dx),var(--dy)) scale(0);opacity:0} }
+  /* ── APY BADGE & SKELETON ── */
+  .char-apy-badge {
+    display: inline-block; font-size: 13px; font-weight: 900;
+    padding: 5px 14px; border-radius: 20px; margin-bottom: 10px;
+    font-family: var(--mono); letter-spacing: 0.3px;
+  }
+  .char-apy-badge.teal {
+    background: rgba(106,255,212,.12); border: 1px solid rgba(106,255,212,.35);
+    color: var(--accent3);
+  }
+  .char-apy-badge.pink {
+    background: rgba(255,106,176,.12); border: 1px solid rgba(255,106,176,.35);
+    color: var(--accent2);
+  }
+  .apy-skeleton {
+    display: inline-block; width: 62px; height: 13px; border-radius: 6px;
+    background: linear-gradient(90deg, var(--border) 25%, var(--surface2) 50%, var(--border) 75%);
+    background-size: 200% 100%; vertical-align: middle;
+    animation: shimmer 1.4s ease-in-out infinite;
+  }
+  @keyframes shimmer {
+    0%   { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+  }
+  /* ── CHARACTER SELECT ── */
+  .char-select-wrap {
+    display: flex; align-items: center; justify-content: center;
+    padding: 100px 24px 60px; min-height: 100vh;
+  }
+  .char-select-inner {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 24px; padding: 40px; width: 100%; max-width: 540px;
+    position: relative; z-index: 1;
+  }
+  .char-select-inner h2 { font-size: 26px; font-weight: 900; margin-bottom: 6px; }
+  .char-select-inner > p { color: var(--dim); font-size: 14px; font-weight: 600; margin-bottom: 28px; }
+  .char-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 26px; }
+  .char-card {
+    background: var(--bg); border: 2px solid var(--border);
+    border-radius: 20px; padding: 24px 14px 18px; text-align: center;
+    cursor: pointer; transition: all .25s; position: relative;
+  }
+  .char-card:hover { transform: translateY(-3px); }
+  .char-card.sel-teal {
+    border-color: var(--accent3);
+    box-shadow: 0 0 30px rgba(106,255,212,.22), inset 0 0 30px rgba(106,255,212,.06);
+    background: rgba(106,255,212,.04);
+  }
+  .char-card.sel-pink {
+    border-color: var(--accent2);
+    box-shadow: 0 0 30px rgba(255,106,176,.22), inset 0 0 30px rgba(255,106,176,.06);
+    background: rgba(255,106,176,.04);
+  }
+  .char-preview {
+    width: 120px; height: 120px; object-fit: contain;
+    margin: 0 auto 14px; display: block;
+    filter: drop-shadow(0 4px 18px rgba(0,0,0,.45));
+    animation: charFloat 2.5s ease-in-out infinite;
+  }
+  @keyframes charFloat { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-10px)} }
+  .char-name {
+    font-size: 20px; font-weight: 900; margin-bottom: 8px;
+    font-family: 'Anybody', var(--font); font-style: italic;
+  }
+  .char-name.teal { color: var(--accent3); }
+  .char-name.pink { color: var(--accent2); }
+  .char-badge {
+    display: inline-block; font-size: 10px; font-weight: 900;
+    padding: 4px 12px; border-radius: 20px; text-transform: uppercase; letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+  .char-badge.teal { background: rgba(106,255,212,.12); border: 1px solid rgba(106,255,212,.3); color: var(--accent3); }
+  .char-badge.pink { background: rgba(255,106,176,.12); border: 1px solid rgba(255,106,176,.3); color: var(--accent2); }
+  .char-desc { font-size: 11px; color: var(--dim); font-weight: 600; line-height: 1.5; margin-bottom: 16px; }
+  /* evolution strip inside char card */
+  .char-evo-strip {
+    border-top: 1px solid var(--border);
+    padding-top: 14px; margin-top: 4px;
+  }
+  .char-evo-row {
+    display: flex; align-items: center; justify-content: center; gap: 2px;
+    margin-bottom: 6px;
+  }
+  .char-evo-img {
+    width: 44px; height: 44px; object-fit: contain;
+    border-radius: 8px;
+    background: rgba(255,255,255,.04);
+    border: 1px solid var(--border);
+    padding: 3px; flex-shrink: 0;
+  }
+  .char-evo-arrow {
+    font-size: 9px; color: var(--dim); flex-shrink: 0; padding: 0 1px;
+  }
+  .char-evo-labels {
+    display: flex; align-items: center; justify-content: center; gap: 2px;
+  }
+  .char-evo-label {
+    width: 44px; text-align: center;
+    font-family: var(--mono); font-size: 9px; font-weight: 700; color: var(--dim);
+    flex-shrink: 0;
+  }
+  .char-evo-label-sep {
+    width: 11px; text-align: center;
+    font-size: 9px; color: transparent;
+    user-select: none; flex-shrink: 0;
+  }
+  .char-amount { margin-bottom: 22px; }
+  /* ── PET NAME INPUT ── */
+  .name-wrap { margin-bottom: 22px; }
+  .name-input {
+    width: 100%; background: var(--bg); border: 1px solid var(--border);
+    border-radius: 14px; padding: 13px 18px;
+    font-family: var(--font); font-size: 18px; font-weight: 700;
+    color: var(--text); outline: none; transition: border-color .2s;
+  }
+  .name-input:focus { border-color: var(--accent); }
+  .name-input::placeholder { color: var(--dim); font-weight: 600; }
+  .name-hint { font-size: 11px; color: var(--dim); font-weight: 600; margin-top: 6px; }
+  .name-hint span { color: var(--accent); font-weight: 800; }
+  .char-adopt-btn {
+    width: 100%; border: none; color: #fff; font-family: var(--font);
+    font-size: 17px; font-weight: 900; padding: 17px;
+    border-radius: 14px; cursor: pointer; transition: all .3s;
+  }
+  .char-adopt-btn.teal {
+    background: linear-gradient(135deg, var(--accent3), var(--accent));
+    box-shadow: 0 4px 24px rgba(106,255,212,.25);
+  }
+  .char-adopt-btn.teal:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(106,255,212,.4); }
+  .char-adopt-btn.pink {
+    background: linear-gradient(135deg, var(--accent2), var(--accent));
+    box-shadow: 0 4px 24px rgba(255,106,176,.25);
+  }
+  .char-adopt-btn.pink:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(255,106,176,.4); }
+  /* ── ASSET SELECTOR ── */
+  .asset-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 22px; }
+  .asset-card {
+    background: var(--bg); border: 2px solid var(--border);
+    border-radius: 14px; padding: 13px 12px; cursor: pointer;
+    transition: all .2s; display: flex; align-items: center; gap: 11px;
+  }
+  .asset-card:hover { border-color: var(--accent); }
+  .asset-card.sel { border-color: var(--accent); background: rgba(124,106,255,.08); }
+  .asset-logo {
+    width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 13px; font-weight: 900; font-family: var(--mono);
+  }
+  .asset-logo.usdc { background: rgba(39,117,202,.18); color: #4c9ff0; border: 1.5px solid rgba(39,117,202,.35); }
+  .asset-logo.weth { background: rgba(124,106,255,.18); color: var(--accent); border: 1.5px solid rgba(124,106,255,.35); }
+  .asset-info { min-width: 0; }
+  .asset-name { font-size: 13px; font-weight: 900; margin-bottom: 3px; }
+  .asset-desc { font-size: 10px; color: var(--dim); font-weight: 600; line-height: 1.4; }
   /* yield tick */
   @keyframes ytick { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
   .ytick { animation: ytick .25s ease-out; }
+  /* ── FUND WALLET ── */
+  .fund-wrap {
+    display: flex; align-items: center; justify-content: center;
+    padding: 100px 24px 60px; min-height: 100vh;
+  }
+  .fund-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 24px; padding: 36px 32px; width: 100%; max-width: 420px;
+    position: relative; z-index: 1; text-align: center;
+  }
+  .fund-icon { font-size: 52px; margin-bottom: 18px; }
+  .fund-card h2 { font-size: 24px; font-weight: 900; margin-bottom: 8px; }
+  .fund-card > p {
+    color: var(--dim); font-size: 14px; font-weight: 600;
+    line-height: 1.6; margin-bottom: 28px;
+  }
+  .fund-qr {
+    width: 180px; height: 180px; border-radius: 16px;
+    margin: 0 auto 22px; display: block;
+    border: 1px solid var(--border);
+    image-rendering: pixelated;
+  }
+  .fund-addr-box {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: 12px; padding: 12px 14px;
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 24px; text-align: left;
+  }
+  .fund-addr-text {
+    font-family: var(--mono); font-size: 11px; color: var(--text);
+    word-break: break-all; flex: 1; line-height: 1.6;
+  }
+  .fund-copy-btn {
+    flex-shrink: 0; background: rgba(124,106,255,.12);
+    border: 1px solid rgba(124,106,255,.3); color: var(--accent);
+    font-family: var(--font); font-size: 11px; font-weight: 800;
+    padding: 6px 12px; border-radius: 8px; cursor: pointer;
+    transition: all .2s; white-space: nowrap;
+  }
+  .fund-copy-btn:hover { background: rgba(124,106,255,.22); }
+  .fund-copy-btn.copied { color: var(--teal); border-color: rgba(106,255,212,.4); background: rgba(106,255,212,.08); }
+  .fund-check-btn {
+    width: 100%; background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none; color: #fff; font-family: var(--font);
+    font-size: 16px; font-weight: 900; padding: 15px;
+    border-radius: 14px; cursor: pointer; transition: all .3s;
+    box-shadow: 0 4px 24px rgba(124,106,255,.3);
+  }
+  .fund-check-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(124,106,255,.5); }
+  .fund-check-btn:disabled { opacity: .65; cursor: not-allowed; transform: none !important; }
+  .fund-status {
+    font-size: 13px; font-weight: 700; margin-top: 16px;
+    min-height: 20px; transition: all .3s;
+  }
+  .fund-status.ok   { color: var(--teal); }
+  .fund-status.err  { color: #ff6a6a; }
+  .fund-status.info { color: var(--dim); }
+  .fund-funded-badge {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(106,255,212,.1); border: 1px solid rgba(106,255,212,.35);
+    color: var(--teal); font-size: 14px; font-weight: 800;
+    padding: 10px 20px; border-radius: 20px; margin-top: 16px;
+    animation: ytick .4s ease-out;
+  }
 `;
 const styleEl = document.createElement("style");
 styleEl.textContent = css;
 document.head.appendChild(styleEl);
 // ── Data ─────────────────────────────────────────────────────────────────────
-const TIERS = [
-  { emoji: "🐣", name: "Hatchling", apy: 0.07, loops: 2, cls: "r-safe",  label: "~7% APY"  },
-  { emoji: "🐉", name: "Dragon",    apy: 0.14, loops: 4, cls: "r-turbo", label: "~14% APY" },
-  { emoji: "⚡", name: "Legend",    apy: 0.22, loops: 6, cls: "r-max",   label: "~22% APY" },
-];
-const EVOLUTIONS = [
-  { threshold: 0,   emoji: "🥚",  name: "Egg",      level: "Level 0" },
-  { threshold: 1,   emoji: "🐣",  name: "Hatchling", level: "Level 1" },
-  { threshold: 10,  emoji: "🐾",  name: "Pup",       level: "Level 2" },
-  { threshold: 30,  emoji: "🐲",  name: "Drake",     level: "Level 3" },
-  { threshold: 80,  emoji: "🐉",  name: "Dragon",    level: "Level 4" },
-  { threshold: 200, emoji: "⭐",  name: "Starborn",  level: "Level 5" },
-];
-function getEvolution(yield_) {
-  let evo = EVOLUTIONS[0];
-  for (const e of EVOLUTIONS) { if (yield_ >= e.threshold) evo = e; }
-  return evo;
-}
 function fmt(n) { return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtTvl(n) {
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000)     return `$${(n / 1_000).toFixed(1)}K`;
+  return `$${Math.round(n)}`;
+}
+// ── Yieldlings localStorage counter ──────────────────────────────────────────
+const YIELDLINGS_BASE = 73;
+const YIELDLINGS_KEY  = "yieldling_count";
+function getYieldlingsTotal() {
+  const extra = parseInt(localStorage.getItem(YIELDLINGS_KEY) ?? "0", 10);
+  return YIELDLINGS_BASE + (isNaN(extra) ? 0 : extra);
+}
+function bumpYieldlings() {
+  const extra = parseInt(localStorage.getItem(YIELDLINGS_KEY) ?? "0", 10);
+  localStorage.setItem(YIELDLINGS_KEY, String((isNaN(extra) ? 0 : extra) + 1));
+}
 // ── Components ───────────────────────────────────────────────────────────────
 function Stars() { return <div className="stars" />; }
-function Nav({ screen, setScreen, walletAddress, connectWallet }) {
+function Nav({ screen, setScreen }) {
+  const { ready, authenticated, login, logout } = usePrivy();
+  const { wallets } = useWallets();
+  const addr = wallets?.[0]?.address;
+  const shortAddr = addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : null;
   const tabs = ["landing", "adopt", "nursery"];
   const labels = ["Home", "Adopt", "Nursery"];
-  const shortAddr = walletAddress
-    ? `${walletAddress.slice(0, 6)}…${walletAddress.slice(-4)}`
-    : "Connect Wallet";
   return (
     <nav className="nav">
       <div className="nav-logo">🥚 Yieldling</div>
@@ -382,54 +643,275 @@ function Nav({ screen, setScreen, walletAddress, connectWallet }) {
           </button>
         ))}
       </div>
-      <button className="nav-wallet" onClick={!walletAddress ? connectWallet : undefined}>
-        {shortAddr}
-      </button>
+      {!ready ? null : authenticated && shortAddr ? (
+        <button className="nav-wallet addr" onClick={logout}>{shortAddr}</button>
+      ) : (
+        <button className="nav-wallet" onClick={login}>Connect</button>
+      )}
     </nav>
   );
 }
 // ── Landing ──────────────────────────────────────────────────────────────────
 function Landing({ setScreen }) {
   const [cracking, setCracking] = useState(false);
-  const crack = () => {
-    setCracking(true);
-    setTimeout(() => setCracking(false), 500);
-  };
+
+  // ── Live stat state ───────────────────────────────────────────────────────
+  const [tvlDisplay,        setTvlDisplay]        = useState("—");
+  const [apyDisplay,        setApyDisplay]        = useState("—");
+  const [yieldlingsDisplay, setYieldlingsDisplay] = useState(0);
+  const [tvlLoading,        setTvlLoading]        = useState(true);
+  const [apyLoading,        setApyLoading]        = useState(true);
+
+  const TVL_FALLBACK = "$8.8M";
+  const APY_FALLBACK = "11.8%";
+
+  const crack = () => { setCracking(true); setTimeout(() => setCracking(false), 500); };
+
+  useEffect(() => {
+    // ── Animate Yieldlings counter from 0 → current value (1.5s ease-out) ──
+    const target    = getYieldlingsTotal();
+    const duration  = 1500;
+    const startTime = performance.now();
+    const tick = (now) => {
+      const elapsed  = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      const eased    = 1 - Math.pow(1 - progress, 3); // cubic ease-out
+      setYieldlingsDisplay(Math.round(target * eased));
+      if (progress < 1) requestAnimationFrame(tick);
+    };
+    requestAnimationFrame(tick);
+
+    // ── Fetch ZyFAI Total TVL (no wallet needed — public read) ────────────
+    getTvl()
+      .then(n => {
+        const display = (typeof n === "number" && n > 0) ? fmtTvl(n) : TVL_FALLBACK;
+        setTvlDisplay(display);
+        setTvlLoading(false);
+      })
+      .catch(err => {
+        console.warn("[Landing] getTvl failed:", err);
+        setTvlDisplay(TVL_FALLBACK);
+        setTvlLoading(false);
+      });
+
+    // ── Fetch Avg APY (no wallet needed — public read) ────────────────────
+    getAvgApy()
+      .then(avg => {
+        const display = (typeof avg === "number" && isFinite(avg) && avg > 0)
+          ? `${avg.toFixed(1)}%`
+          : APY_FALLBACK;
+        setApyDisplay(display);
+        setApyLoading(false);
+      })
+      .catch(err => {
+        console.warn("[Landing] getAvgApy failed:", err);
+        setApyDisplay(APY_FALLBACK);
+        setApyLoading(false);
+      });
+  }, []);
+
+  const stats = [
+    { val: tvlDisplay,             lbl: "ZyFAI Total TVL", loading: tvlLoading },
+    { val: `${yieldlingsDisplay}`, lbl: "Yieldlings",      loading: false      },
+    { val: apyDisplay,             lbl: "Avg APY",         loading: apyLoading },
+  ];
+
   return (
     <div className="screen landing">
       <div className="landing-glow" />
-      <div className="hero-tag">🥚 Yieldling — Powered by ZyFAI · Lido wstETH · AAVE</div>
+      <div className="hero-tag">🥚 Yieldling — Powered by ZyFAI · AI-Optimised DeFi Yield</div>
       <div className={`hero-egg ${cracking ? "crack" : ""}`} onClick={crack}>🥚</div>
       <h1 className="hero-h1">Your savings,<br /><span>alive.</span></h1>
       <p className="hero-sub">
-        Adopt a pet. Deposit once. Watch it grow on an automated wstETH looping strategy —
+        Adopt a pet. Deposit once. ZyFAI automatically finds the best yield across DeFi protocols —
         no jargon, no dashboards, just a creature that thrives when your money works.
       </p>
       <button className="hero-cta" onClick={() => setScreen("adopt")}>Adopt Your Pet →</button>
       <div className="hero-stats">
-        {[["$2.4M","Total Deposited"],["847","Pets Alive"],["14.2%","Avg APY"],["$0","Liquidations Ever"]].map(([v,l]) => (
-          <div className="hero-stat" key={l}><div className="val">{v}</div><div className="lbl">{l}</div></div>
+        {stats.map(({ val, lbl, loading }) => (
+          <div className="hero-stat" key={lbl}>
+            <div className={`val${loading ? " loading" : ""}`}>{loading ? "—" : val}</div>
+            <div className="lbl">{lbl}</div>
+          </div>
         ))}
       </div>
     </div>
   );
 }
+// ── FundWallet ────────────────────────────────────────────────────────────────
+function FundWallet({ walletAddress, onFunded }) {
+  const [copied,   setCopied]   = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [status,   setStatus]   = useState(null);   // { type, msg }
+  const [funded,   setFunded]   = useState(false);
+  const pollRef = useState(null);
+
+  const short = walletAddress
+    ? `${walletAddress.slice(0, 10)}…${walletAddress.slice(-8)}`
+    : "—";
+
+  const qrSrc = walletAddress
+    ? `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${walletAddress}&bgcolor=0e1420&color=6affd4&margin=12&format=png`
+    : null;
+
+  const handleCopy = () => {
+    navigator.clipboard.writeText(walletAddress).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  const doCheck = async (auto = false) => {
+    if (!walletAddress) return false;
+    if (!auto) setChecking(true);
+    try {
+      const { eth, usdc } = await checkWalletBalance(walletAddress);
+      const hasFunds = eth > 0n || usdc > 0n;
+      if (hasFunds) {
+        const ethAmt  = (Number(eth)  / 1e18).toFixed(6);
+        const usdcAmt = (Number(usdc) / 1e6).toFixed(2);
+        setStatus({ type: "ok", msg: `✓ Balance detected: ${usdcAmt} USDC · ${ethAmt} ETH` });
+        setFunded(true);
+        setTimeout(() => onFunded(), 1400);
+        return true;
+      } else {
+        if (!auto) setStatus({ type: "info", msg: "No funds yet — waiting…" });
+        return false;
+      }
+    } catch (e) {
+      if (!auto) setStatus({ type: "err", msg: "Could not check balance — try again" });
+      return false;
+    } finally {
+      if (!auto) setChecking(false);
+    }
+  };
+
+  // Auto-poll every 5 s
+  useEffect(() => {
+    if (funded) return;
+    const iv = setInterval(() => doCheck(true), 5000);
+    return () => clearInterval(iv);
+  }, [walletAddress, funded]);
+
+  return (
+    <div className="screen fund-wrap">
+      <Stars />
+      <div className="fund-card">
+        <div className="fund-icon">💰</div>
+        <h2>Fund your wallet</h2>
+        <p>
+          You signed in with a Privy embedded wallet. Send <strong>USDC or ETH</strong> to
+          this address on <strong>Base</strong> to get started — we'll detect it automatically.
+        </p>
+
+        {qrSrc && (
+          <img className="fund-qr" src={qrSrc} alt="Wallet QR code" />
+        )}
+
+        <div className="fund-addr-box">
+          <div className="fund-addr-text">{walletAddress}</div>
+          <button
+            className={`fund-copy-btn ${copied ? "copied" : ""}`}
+            onClick={handleCopy}
+          >
+            {copied ? "✓ Copied" : "Copy"}
+          </button>
+        </div>
+
+        {funded ? (
+          <div className="fund-funded-badge">✓ Funded — entering Nursery…</div>
+        ) : (
+          <button
+            className="fund-check-btn"
+            onClick={() => doCheck(false)}
+            disabled={checking}
+          >
+            {checking ? "⏳ Checking…" : "Check Balance"}
+          </button>
+        )}
+
+        {status && !funded && (
+          <div className={`fund-status ${status.type}`}>{status.msg}</div>
+        )}
+      </div>
+    </div>
+  );
+}
 // ── Adopt ────────────────────────────────────────────────────────────────────
-function Adopt({ setScreen, walletAddress, connectWallet, setSmartWalletAddress }) {
-  const [amount, setAmount] = useState(1000);
-  const [tierIdx, setTierIdx] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState(null);
-  const tier = TIERS[tierIdx];
-  const yearly = amount * tier.apy;
-  const monthly = yearly / 12;
+function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
+  const { authenticated, login } = usePrivy();
+  const { wallets } = useWallets();
+
+  // Always read from the first active wallet — works for both embedded and injected
+  const activeWallet      = wallets?.[0] ?? null;
+  const walletAddress     = activeWallet?.address ?? null;
+  const isEmbedded        = activeWallet?.walletClientType === "privy";
+
+  const [funded,        setFunded]        = useState(!isEmbedded);
+  const [selectedChar,  setSelectedChar]  = useState("stabby");
+  const [petName,       setPetName]       = useState(() => localStorage.getItem("yieldling_pet_name") ?? "");
+  const [amount,        setAmount]        = useState(1000);
+  const [loading,       setLoading]       = useState(false);
+  const [error,         setError]         = useState(null);
+
+  // ── Live APY per character ───────────────────────────────────────────────
+  const [apys,       setApys]       = useState({ stabby: null, volty: null });
+  const [apyLoading, setApyLoading] = useState(true);
+
+  useEffect(() => {
+    // No wallet connection needed — public SDK read
+    Promise.allSettled([
+      getStrategyApy("conservative", "USDC"),
+      getStrategyApy("aggressive",   "WETH"),
+    ]).then(([stabbyRes, voltyRes]) => {
+      setApys({
+        stabby: stabbyRes.status === "fulfilled" ? stabbyRes.value : null,
+        volty:  voltyRes.status  === "fulfilled" ? voltyRes.value  : null,
+      });
+      setApyLoading(false);
+    });
+  }, []);
+
+  // Re-evaluate when wallet changes (e.g. embedded wallet detected after login)
+  useEffect(() => {
+    setFunded(!isEmbedded);
+  }, [isEmbedded]);
+
+  const asset      = selectedChar === "stabby" ? "USDC" : "WETH";
+  const accentCls  = selectedChar === "stabby" ? "teal" : "pink";
+  const selectedApy = apys[selectedChar]; // null while loading or on failure
+
+  // Not logged in → show gate
+  if (!authenticated) {
+    return (
+      <div className="screen gate-wrap">
+        <div className="stars" />
+        <div className="gate-icon">🥚</div>
+        <h2 className="gate-h2">Connect to adopt your Yieldling</h2>
+        <p className="gate-sub">Sign in with your wallet, email, or Google to get started.</p>
+        <button className="gate-btn" onClick={login}>Connect →</button>
+      </div>
+    );
+  }
+
+  // Embedded wallet with no confirmed funds → show funding screen
+  if (isEmbedded && !funded) {
+    return (
+      <FundWallet
+        walletAddress={walletAddress}
+        onFunded={() => setFunded(true)}
+      />
+    );
+  }
 
   const handleAdopt = async () => {
-    setLoading(true);
-    setError(null);
+    setLoading(true); setError(null);
     try {
-      const result = await depositToZyfai(amount, walletAddress);
+      const result = await depositToZyfai(amount, walletAddress, asset);
       setSmartWalletAddress(result.smartWallet);
+      setCharacter(selectedChar);
+      localStorage.setItem("yieldling_pet_name", petName.trim()); // persist custom name
+      bumpYieldlings(); // increment the persistent Yieldlings counter
       setScreen("nursery");
     } catch (err) {
       console.error("[Adopt] deposit failed:", err);
@@ -439,90 +921,159 @@ function Adopt({ setScreen, walletAddress, connectWallet, setSmartWalletAddress 
     }
   };
 
+  const chars = [
+    { id: "stabby", accentCls: "teal", asset: "USDC",
+      personality: "Calm & stable yields", apyFallback: "conservative APY" },
+    { id: "volty",  accentCls: "pink",  asset: "WETH",
+      personality: "Electric & high energy", apyFallback: "aggressive APY" },
+  ];
+
+  // Projection figures using real APY (or null while loading/failed)
+  const monthlyYield = (selectedApy !== null && amount > 0)
+    ? amount * (selectedApy / 100) / 12
+    : null;
+  const yearlyYield  = (selectedApy !== null && amount > 0)
+    ? amount * (selectedApy / 100)
+    : null;
+
   return (
-    <div className="screen adopt-wrap">
-      <div className="adopt-card">
-        <h2>Adopt your Yieldling 🥚</h2>
-        <p>Choose your deposit and how hard you want your money to work.</p>
-        <div className="amount-wrap">
-          <label className="field-label">Deposit Amount (USDC)</label>
+    <div className="screen char-select-wrap">
+      <div className="char-select-inner">
+        <h2>Choose your Yieldling 🥚</h2>
+        <p>Pick your creature — it sets your asset and strategy automatically.</p>
+        <div className="char-grid">
+          {chars.map(c => {
+            const imgs  = CHAR_IMGS[c.id];
+            const label = c.id.charAt(0).toUpperCase() + c.id.slice(1);
+            const apy   = apys[c.id];
+            return (
+              <div key={c.id}
+                className={`char-card ${selectedChar === c.id ? `sel-${c.accentCls}` : ""}`}
+                onClick={() => setSelectedChar(c.id)}>
+                {/* Main hero image */}
+                <img className="char-preview" src={imgs[1]} alt={c.id}
+                  style={{ width: 140, height: 140 }} />
+                <div className={`char-name ${c.accentCls}`}>{label}</div>
+                <div className={`char-badge ${c.accentCls}`}>{c.asset}</div>
+                {/* Live APY badge */}
+                <div className={`char-apy-badge ${c.accentCls}`}>
+                  {apyLoading
+                    ? <span className="apy-skeleton" />
+                    : apy !== null
+                      ? `${apy.toFixed(1)}% APY`
+                      : c.apyFallback}
+                </div>
+                <div className="char-desc">{c.personality}</div>
+                {/* Evolution preview strip */}
+                <div className="char-evo-strip">
+                  <div className="char-evo-row">
+                    {imgs.map((img, i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center" }}>
+                        <img className="char-evo-img" src={img} alt={`stage ${i+1}`} />
+                        {i < imgs.length - 1 && (
+                          <span className="char-evo-arrow">›</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  <div className="char-evo-labels">
+                    {EVO_LABELS.map((lbl, i) => (
+                      <div key={i} style={{ display:"flex", alignItems:"center" }}>
+                        <div className="char-evo-label">{lbl}</div>
+                        {i < EVO_LABELS.length - 1 && (
+                          <div className="char-evo-label-sep">›</div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        {/* Custom name */}
+        <div className="name-wrap">
+          <label className="field-label">Name your Yieldling</label>
+          <input
+            className="name-input"
+            type="text"
+            value={petName}
+            onChange={e => setPetName(e.target.value.slice(0, 12))}
+            placeholder={selectedChar === "stabby" ? "Ziggy" : "Sparky"}
+            maxLength={12}
+          />
+          <div className="name-hint">
+            {petName.trim()
+              ? <>Your Yieldling will be called <span>{petName.trim()}</span></>
+              : <>Optional — leave blank to use <span>{selectedChar === "stabby" ? "Stabby" : "Volty"}</span></>}
+          </div>
+        </div>
+        <div className="char-amount">
+          <label className="field-label">Deposit Amount ({asset})</label>
           <input className="amount-input" type="number" value={amount}
             onChange={e => setAmount(parseFloat(e.target.value) || 0)} />
         </div>
-        <label className="field-label" style={{marginBottom:10}}>Risk Tier</label>
-        <div className="risk-grid">
-          {TIERS.map((t, i) => (
-            <div key={t.name} className={`risk-card ${tierIdx === i ? "sel" : ""}`} onClick={() => setTierIdx(i)}>
-              <div className="r-emoji">{t.emoji}</div>
-              <div className="r-name">{t.name}</div>
-              <div className={`r-apy ${t.cls}`}>{t.label}</div>
+        {/* Projection panel — only shown when we have a real APY and a non-zero amount */}
+        {monthlyYield !== null && (
+          <div className="proj-box">
+            <div className="proj-row">
+              <span className="proj-key">Est. monthly yield</span>
+              <span className={`proj-val ${accentCls === "teal" ? "c-green" : "c-pink"}`}>
+                +{fmt(monthlyYield)} {asset}
+              </span>
             </div>
-          ))}
-        </div>
-        <div className="proj-box">
-          {[
-            ["Deposit",        `$${fmt(amount)}`,         ""],
-            ["Asset",          "wstETH (Lido)",           "c-purple"],
-            ["Loop Depth",     `${tier.loops}×`,          "c-purple"],
-            ["Monthly Yield",  `+$${fmt(monthly)}`,       "c-green"],
-            ["Yearly Yield",   `+$${fmt(yearly)}`,        "c-green"],
-            ["Principal Risk", "None ✓",                  "c-green"],
-          ].map(([k, v, c]) => (
-            <div className="proj-row" key={k}>
-              <span className="proj-key">{k}</span>
-              <span className={`proj-val ${c}`}>{v}</span>
+            <div className="proj-row">
+              <span className="proj-key">Est. yearly yield</span>
+              <span className={`proj-val ${accentCls === "teal" ? "c-green" : "c-pink"}`}>
+                +{fmt(yearlyYield)} {asset}
+              </span>
             </div>
-          ))}
-        </div>
+            <div className="proj-row">
+              <span className="proj-key">Current APY</span>
+              <span className="proj-val c-purple">{selectedApy.toFixed(1)}%</span>
+            </div>
+          </div>
+        )}
         {error && (
           <p style={{ color: "var(--danger)", fontSize: 13, fontWeight: 700, marginBottom: 12, textAlign: "center" }}>
             {error}
           </p>
         )}
-        {walletAddress ? (
-          <button className="adopt-btn" onClick={handleAdopt} disabled={loading}
-            style={{ opacity: loading ? 0.7 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
-            {loading ? "⏳ Depositing…" : `🥚 Adopt your Yieldling for $${fmt(amount)}`}
-          </button>
-        ) : (
-          <button className="adopt-btn" onClick={connectWallet}>
-            🔌 Connect Wallet to Continue
-          </button>
-        )}
+        <button className={`char-adopt-btn ${accentCls}`} onClick={handleAdopt} disabled={loading}
+          style={{ opacity: loading ? 0.7 : 1, cursor: loading ? "not-allowed" : "pointer" }}>
+          {loading ? "⏳ Depositing…" : `Adopt ${selectedChar === "stabby" ? "Stabby" : "Volty"} →`}
+        </button>
       </div>
     </div>
   );
 }
-// ── Nursery ──────────────────────────────────────────────────────────────────
 // ── App ───────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [screen, setScreen] = useState("landing");
-  const [walletAddress, setWalletAddress] = useState(null);
-  const [smartWalletAddress, setSmartWalletAddress] = useState(null);
+  const { wallets } = useWallets();
+  // Single source of truth for wallet address — works for embedded and injected
+  const walletAddress = wallets?.[0]?.address ?? null;
 
-  const connectWallet = async () => {
-    if (!window.ethereum) { alert("MetaMask (or another wallet) not found."); return; }
-    const accounts = await window.ethereum.request({ method: "eth_requestAccounts" });
-    setWalletAddress(accounts[0]);
-  };
+  const [screen,             setScreen]             = useState("landing");
+  const [smartWalletAddress, setSmartWalletAddress] = useState(null);
+  const [character,          setCharacter]          = useState("stabby");
 
   return (
     <>
       <Stars />
-      <Nav screen={screen} setScreen={setScreen} walletAddress={walletAddress} connectWallet={connectWallet} />
-      {screen === "landing"  && <Landing  setScreen={setScreen} />}
+      <Nav screen={screen} setScreen={setScreen} />
+      {screen === "landing"  && <Landing setScreen={setScreen} />}
       {screen === "adopt"    && (
         <Adopt
           setScreen={setScreen}
-          walletAddress={walletAddress}
-          connectWallet={connectWallet}
           setSmartWalletAddress={setSmartWalletAddress}
+          setCharacter={setCharacter}
         />
       )}
       {screen === "nursery"  && (
         <NurseryScreen
           walletAddress={walletAddress}
           smartWalletAddress={smartWalletAddress}
+          character={character}
         />
       )}
     </>
