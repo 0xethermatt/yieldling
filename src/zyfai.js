@@ -6,8 +6,9 @@ import { base } from "viem/chains";
 
 const CHAIN_ID = 8453; // Base mainnet
 
-// USDC on Base mainnet
+// Token addresses on Base mainnet
 const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+const WETH_ADDRESS = "0x4200000000000000000000000000000000000006";
 
 const BALANCE_OF_ABI = [{
   name: "balanceOf", type: "function", stateMutability: "view",
@@ -118,10 +119,11 @@ export async function depositToZyfai(amount, walletAddress, asset = "USDC", prov
     ? String(parseEther(amount.toString()))   // BigInt → string
     : String(Math.round(amount * 1_000_000));
 
-  console.log(`[ZyFAI] Step 5: depositing — ${amount} ${asset} = ${amountUnits} base units`);
+  const tokenAddress = asset === "WETH" ? WETH_ADDRESS : USDC_ADDRESS;
+  console.log(`[ZyFAI] Step 5: depositing — ${amount} ${asset} = ${amountUnits} base units, tokenAddress: ${tokenAddress}`);
   let result;
   try {
-    result = await sdk.depositFunds(walletAddress, CHAIN_ID, amountUnits, { asset });
+    result = await sdk.depositFunds(walletAddress, CHAIN_ID, amountUnits, { asset, tokenAddress });
     console.log("[ZyFAI] Step 5 ✓ deposit complete:", JSON.stringify(result, null, 2));
   } catch (e) {
     console.error("[ZyFAI] Step 5 ✗ depositFunds failed:", e?.message, e?.code, e?.stack);
