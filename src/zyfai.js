@@ -254,7 +254,7 @@ export async function getPositions(walletAddress, chainId = 8453) {
   const p = result?.portfolio;
 
   // Sum an array of positions
-  if (Array.isArray(p?.positions)) {
+  if (Array.isArray(p?.positions) && p.positions.length > 0) {
     const total = p.positions.reduce((s, pos) => s + (pos.value ?? pos.balance ?? pos.amount ?? pos.valueUsdc ?? 0), 0);
     if (total > 0) return total;
   }
@@ -275,7 +275,27 @@ export async function getPositions(walletAddress, chainId = 8453) {
       ? result.data.reduce((s, pos) => s + (pos.value ?? pos.balance ?? pos.amount ?? 0), 0)
       : null);
 
-  if (typeof scalar === "number" && isFinite(scalar)) return scalar;
+  if (typeof scalar === "number" && isFinite(scalar) && scalar > 0) return scalar;
+
+  // ── Fallback: read the Safe's on-chain token balance ─────────────────────
+  // ZyFAI may not have allocated funds to a strategy yet right after deposit.
+  // The safe address lives in result.portfolio?.safeAddress or we resolve it
+  // via getSmartWalletByEOA (same call the SDK already made internally).
+  try {
+    const safeInfo  = await sdk.getSmartWalletByEOA(walletAddress);
+    const safeAddr  = safeInfo?.smartWallet;
+    console.log("[ZyFAI] getPositions safe fallback — safeAddr:", safeAddr);
+    if (safeAddr) {
+      // Try USDC first, then WETH
+      const usdc = await getSafeBalance(safeAddr, "USDC");
+      if (usdc > 0) { console.log("[ZyFAI] getPositions safe fallback USDC:", usdc); return usdc; }
+      const weth = await getSafeBalance(safeAddr, "WETH");
+      if (weth > 0) { console.log("[ZyFAI] getPositions safe fallback WETH:", weth); return weth; }
+    }
+  } catch (e) {
+    console.warn("[ZyFAI] getPositions safe fallback failed:", e.message);
+  }
+
   return 0;
 }
 
