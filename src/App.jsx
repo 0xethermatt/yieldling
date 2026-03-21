@@ -443,22 +443,25 @@ const css = `
   /* ── CHARACTER SELECT ── */
   .char-select-wrap {
     display: flex; align-items: center; justify-content: center;
-    padding: 100px 24px 60px; min-height: 100vh;
+    padding: 100px 16px 60px; min-height: 100vh;
   }
   .char-select-inner {
     background: var(--surface); border: 1px solid var(--border);
-    border-radius: 24px; padding: 40px; width: 100%; max-width: 540px;
-    position: relative; z-index: 1;
+    border-radius: 24px; padding: 32px 24px; width: 100%; max-width: min(540px, 100%);
+    position: relative; z-index: 1; overflow: hidden;
   }
   .char-select-inner h2 { font-size: 26px; font-weight: 900; margin-bottom: 6px; }
   .char-select-inner > p { color: var(--dim); font-size: 14px; font-weight: 600; margin-bottom: 28px; }
-  .char-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 26px; align-items: stretch; }
+  .char-grid {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 12px; margin-bottom: 26px; align-items: stretch; overflow: hidden;
+  }
   .char-card {
     background: var(--bg); border: 2px solid var(--border);
-    border-radius: 20px; padding: 24px 14px 22px; text-align: center;
+    border-radius: 20px; padding: 20px 10px 18px; text-align: center;
     cursor: pointer; transition: all .25s; position: relative;
     display: flex; flex-direction: column; align-items: center;
-    height: 100%;
+    width: 100%; height: 100%; overflow: hidden; box-sizing: border-box;
   }
   .char-card:hover { transform: translateY(-3px); }
   .char-card.sel-teal {
@@ -500,30 +503,30 @@ const css = `
     width: 100%;
   }
   .char-evo-row {
-    display: flex; align-items: center; justify-content: center; gap: 2px;
-    margin-bottom: 6px;
+    display: flex; align-items: center; justify-content: center; gap: 1px;
+    margin-bottom: 5px;
   }
   .char-evo-img {
-    width: 44px; height: 44px; object-fit: contain;
-    border-radius: 8px;
+    width: 36px; height: 36px; object-fit: contain;
+    border-radius: 7px;
     background: rgba(255,255,255,.04);
     border: 1px solid var(--border);
-    padding: 3px; flex-shrink: 0;
+    padding: 2px; flex-shrink: 0;
   }
   .char-evo-arrow {
-    font-size: 9px; color: var(--dim); flex-shrink: 0; padding: 0 1px;
+    font-size: 8px; color: var(--dim); flex-shrink: 0; padding: 0;
   }
   .char-evo-labels {
-    display: flex; align-items: center; justify-content: center; gap: 2px;
+    display: flex; align-items: center; justify-content: center; gap: 1px;
   }
   .char-evo-label {
-    width: 44px; text-align: center;
-    font-family: var(--mono); font-size: 9px; font-weight: 700; color: var(--dim);
+    width: 36px; text-align: center;
+    font-family: var(--mono); font-size: 8px; font-weight: 700; color: var(--dim);
     flex-shrink: 0;
   }
   .char-evo-label-sep {
-    width: 11px; text-align: center;
-    font-size: 9px; color: transparent;
+    width: 8px; text-align: center;
+    font-size: 8px; color: transparent;
     user-select: none; flex-shrink: 0;
   }
   .char-amount { margin-bottom: 22px; }
