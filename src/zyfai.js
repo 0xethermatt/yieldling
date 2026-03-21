@@ -160,6 +160,18 @@ export async function depositToZyfai(amount, walletAddress, asset = "USDC", prov
     throw e;
   }
 
+  // Step 4.5 — for WETH deposits, wrap native ETH → WETH first
+  if (asset === "WETH") {
+    console.log(`[ZyFAI] Step 4.5: wrapping ${amount} ETH → WETH on Base...`);
+    try {
+      await wrapEthToWeth(amount, provider, walletAddress);
+      console.log("[ZyFAI] Step 4.5 ✓ ETH wrapped to WETH");
+    } catch (e) {
+      console.error("[ZyFAI] Step 4.5 ✗ ETH wrap failed:", e?.message, e?.code);
+      throw e;
+    }
+  }
+
   // Step 5 — build amount in base units and deposit
   // USDC = 6 decimals  →  100 USDC  = "100000000"
   // WETH = 18 decimals →  0.01 WETH = "10000000000000000"
@@ -487,6 +499,47 @@ export async function getSafeBalance(safeAddress, asset = "USDC") {
   const usdc = Number(raw) / 1e6;
   console.log(`[ZyFAI] getSafeBalance USDC: ${usdc}`);
   return usdc;
+}
+
+/**
+ * Get the native ETH balance of an address on Base mainnet.
+ *
+ * @param {string} address
+ * @returns {number} ETH balance as a float (e.g. 0.0312)
+ */
+export async function getEthBalance(address) {
+  const client = createPublicClient({ chain: base, transport: http() });
+  const wei = await client.getBalance({ address });
+  return Number(wei) / 1e18;
+}
+
+/**
+ * Wrap native ETH to WETH on Base mainnet.
+ * Calls the WETH deposit() function and waits for confirmation.
+ *
+ * @param {number}  amountEth   - Human-readable ETH amount (e.g. 0.001)
+ * @param {object}  provider    - EIP-1193 provider
+ * @param {string}  walletAddress
+ */
+async function wrapEthToWeth(amountEth, provider, walletAddress) {
+  const amountWei = parseEther(amountEth.toString());
+  const hexValue  = "0x" + amountWei.toString(16);
+  console.log(`[ZyFAI] wrapEthToWeth: ${amountEth} ETH = ${amountWei} wei`);
+
+  const txHash = await provider.request({
+    method: "eth_sendTransaction",
+    params: [{
+      from:  walletAddress,
+      to:    WETH_ADDRESS,
+      value: hexValue,
+      data:  "0xd0e30db0", // deposit() selector
+    }],
+  });
+  console.log(`[ZyFAI] wrapEthToWeth tx submitted: ${txHash} — waiting for confirmation...`);
+
+  const client = createPublicClient({ chain: base, transport: http() });
+  await client.waitForTransactionReceipt({ hash: txHash });
+  console.log(`[ZyFAI] wrapEthToWeth confirmed ✓`);
 }
 
 /**

@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import NurseryScreen from "./Nursery.jsx";
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { depositToZyfai, checkWalletBalance, getTvl, getAvgApy, getStrategyApy } from "./zyfai.js";
+import { depositToZyfai, checkWalletBalance, getEthBalance, getTvl, getAvgApy, getStrategyApy } from "./zyfai.js";
 import stabby1 from "./assets/stabby-1.png";
 import stabby2 from "./assets/stabby-2.png";
 import stabby3 from "./assets/stabby-3.png";
@@ -1000,7 +1000,7 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
   // Per-character deposit config
   const DEPOSIT_CFG = {
     stabby: { min: 10,    placeholder: "100",  minLabel: "Minimum deposit is $10 USDC"   },
-    volty:  { min: 0.001, placeholder: "0.01", minLabel: "Minimum deposit is 0.001 WETH" },
+    volty:  { min: 0.001, placeholder: "0.01", minLabel: "Minimum deposit is 0.001 ETH" },
   };
   const cfg        = DEPOSIT_CFG[selectedChar];
   const amountNum  = parseFloat(amount);
@@ -1044,8 +1044,9 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
     setFunded(!isEmbedded);
   }, [isEmbedded]);
 
-  const asset      = selectedChar === "stabby" ? "USDC" : "WETH";
-  const accentCls  = selectedChar === "stabby" ? "teal" : "pink";
+  const asset        = selectedChar === "stabby" ? "USDC" : "WETH";
+  const displayAsset = selectedChar === "stabby" ? "USDC" : "ETH";
+  const accentCls    = selectedChar === "stabby" ? "teal" : "pink";
   const selectedApy = apys[selectedChar]; // null while loading or on failure
 
   // Not logged in → show gate
@@ -1080,6 +1081,17 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
       const provider = await activeWallet?.getEthereumProvider?.() ?? window.ethereum;
       console.log("[Adopt] provider obtained:", provider?.constructor?.name ?? typeof provider);
 
+      // For Volty (WETH): check ETH balance on Base before attempting wrap
+      if (asset === "WETH") {
+        const ethBal = await getEthBalance(walletAddress);
+        console.log(`[Adopt] ETH balance on Base: ${ethBal}`);
+        if (ethBal < amountNum) {
+          setError(`Insufficient ETH balance. You have ${ethBal.toFixed(4)} ETH on Base — need ${amountNum} ETH.`);
+          setLoading(false);
+          return;
+        }
+      }
+
       const strategy = "aggressive";
       const result = await depositToZyfai(amountNum, walletAddress, asset, provider, strategy);
       setSmartWalletAddress(result.smartWallet);
@@ -1113,7 +1125,7 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
   const chars = [
     { id: "stabby", accentCls: "teal", asset: "USDC",
       personality: "Calm & stable yields", apyFallback: "7.2%" },
-    { id: "volty",  accentCls: "pink",  asset: "WETH",
+    { id: "volty",  accentCls: "pink",  asset: "ETH",
       personality: "ETH-native yield, steady growth", apyFallback: "12.4%" },
   ];
 
@@ -1206,7 +1218,7 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
           </div>
         </div>
         <div className="char-amount">
-          <label className="field-label">Deposit Amount ({asset})</label>
+          <label className="field-label">Deposit Amount ({displayAsset})</label>
           <input
             className="amount-input"
             type="number"
@@ -1218,6 +1230,11 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
           />
           {amountTooLow && (
             <div className="amount-hint err">{cfg.minLabel}</div>
+          )}
+          {selectedChar === "volty" && !amountTooLow && (
+            <div className="amount-hint info">
+              ⚡ Your ETH will be automatically wrapped to WETH and deposited into ZyFAI
+            </div>
           )}
         </div>
         {/* Details panel — shown as soon as amount is valid; APY rows shimmer while loading */}
