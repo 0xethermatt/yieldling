@@ -458,6 +458,7 @@ const css = `
     border-radius: 20px; padding: 24px 14px 22px; text-align: center;
     cursor: pointer; transition: all .25s; position: relative;
     display: flex; flex-direction: column; align-items: center;
+    height: 100%;
   }
   .char-card:hover { transform: translateY(-3px); }
   .char-card.sel-teal {
@@ -968,7 +969,13 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
   const handleAdopt = async () => {
     setLoading(true); setError(null);
     try {
-      const result = await depositToZyfai(amountNum, walletAddress, asset);
+      // Get the EIP-1193 provider from the Privy wallet — embedded wallets
+      // have their own provider separate from window.ethereum
+      console.log("[Adopt] active wallet:", activeWallet?.walletClientType, activeWallet?.address);
+      const provider = await activeWallet?.getEthereumProvider?.() ?? window.ethereum;
+      console.log("[Adopt] provider obtained:", provider?.constructor?.name ?? typeof provider);
+
+      const result = await depositToZyfai(amountNum, walletAddress, asset, provider);
       setSmartWalletAddress(result.smartWallet);
       setCharacter(selectedChar);
       // Persist all adoption state
@@ -978,11 +985,15 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
       localStorage.setItem("yieldling_wallet",      walletAddress);
       localStorage.setItem("yieldling_character",   selectedChar);
       localStorage.setItem("yieldling_smart_wallet", result.smartWallet);
-      bumpYieldlings(); // increment the persistent Yieldlings counter
+      bumpYieldlings();
       setScreen("nursery");
     } catch (err) {
-      console.error("[Adopt] deposit failed:", err);
-      setError("Deposit failed. Please try again.");
+      console.error("[Adopt] ✗ deposit failed");
+      console.error("[Adopt] message:", err?.message);
+      console.error("[Adopt] code:",    err?.code);
+      console.error("[Adopt] stack:",   err?.stack);
+      console.error("[Adopt] full err obj:", err);
+      setError(err?.message?.length > 0 ? err.message : "Deposit failed. Please try again.");
     } finally {
       setLoading(false);
     }
@@ -995,13 +1006,18 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
       personality: "ETH-native yield, steady growth", apyFallback: "12.4%" },
   ];
 
-  // Projection figures — only when amount is valid and APY is loaded
+  // Projection figures — computed whenever amount is valid (APY may still be loading)
+  const isUSDC = selectedChar === "stabby";
   const monthlyYield = (selectedApy !== null && amountValid)
     ? amountNum * (selectedApy / 100) / 12
     : null;
   const yearlyYield  = (selectedApy !== null && amountValid)
     ? amountNum * (selectedApy / 100)
     : null;
+  // Format yield in the correct unit for the selected character
+  const fmtYield = (n) => isUSDC
+    ? `$${fmt(n)}`
+    : `${n.toFixed(4)} ETH`;
 
   return (
     <div className="screen char-select-wrap">
@@ -1083,7 +1099,7 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
             <div className="amount-hint err">{cfg.minLabel}</div>
           )}
         </div>
-        {/* Details panel — only shown when amount is valid */}
+        {/* Details panel — shown as soon as amount is valid; APY rows shimmer while loading */}
         {amountValid && (
           <div className="details-panel">
             <div className="details-title">Details</div>
@@ -1091,7 +1107,12 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
             <div className="details-row">
               <span className="details-lbl">Average APY</span>
               <span className="details-val">
-                {selectedApy !== null ? `${selectedApy.toFixed(1)}%` : "—"}
+                {apyLoading
+                  ? <span className="apy-skeleton" />
+                  : selectedApy !== null
+                    ? `${selectedApy.toFixed(1)}%`
+                    : "—"
+                }
                 <span className="details-info">ⓘ</span>
               </span>
             </div>
@@ -1099,7 +1120,12 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
             <div className="details-row">
               <span className="details-lbl">Projected monthly earnings</span>
               <span className="details-val">
-                {monthlyYield !== null ? `$${fmt(monthlyYield)} / mo` : "—"}
+                {apyLoading
+                  ? <span className="apy-skeleton" />
+                  : monthlyYield !== null
+                    ? `${fmtYield(monthlyYield)} / mo`
+                    : "—"
+                }
                 <span className="details-info">ⓘ</span>
               </span>
             </div>
@@ -1107,7 +1133,12 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
             <div className="details-row">
               <span className="details-lbl">Projected yearly earnings</span>
               <span className="details-val">
-                {yearlyYield !== null ? `$${fmt(yearlyYield)} / yr` : "—"}
+                {apyLoading
+                  ? <span className="apy-skeleton" />
+                  : yearlyYield !== null
+                    ? `${fmtYield(yearlyYield)} / yr`
+                    : "—"
+                }
                 <span className="details-info">ⓘ</span>
               </span>
             </div>

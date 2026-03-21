@@ -1,13 +1,13 @@
 import { ZyfaiSDK } from "@zyfai/sdk";
 import { createPublicClient, http, parseEther } from "viem";
-import { baseSepolia } from "viem/chains";
+import { base } from "viem/chains";
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
-const CHAIN_ID = 84532; // Base Sepolia (switch to 8453 for mainnet)
+const CHAIN_ID = 8453; // Base mainnet
 
-// USDC on Base Sepolia
-const USDC_ADDRESS = "0x036CbD53842c5426634e7929541eC2318f3dCF7e";
+// USDC on Base mainnet
+const USDC_ADDRESS = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
 
 const BALANCE_OF_ABI = [{
   name: "balanceOf", type: "function", stateMutability: "view",
@@ -28,53 +28,97 @@ function createSdk() {
 /**
  * Deposit into the ZyFAI AI-optimised yield strategy.
  *
- * ZyFAI automatically routes funds across the best DeFi protocols on Base —
- * no manual strategy selection, no manual rebalancing.
- *
- * @param {number} amount           - Human-readable amount (e.g. 100 = 100 USDC, 0.05 = 0.05 WETH)
+ * @param {number} amount           - Human-readable amount (e.g. 100 = 100 USDC, 0.01 = 0.01 WETH)
  * @param {string} walletAddress    - User's EOA wallet address
  * @param {"USDC"|"WETH"} asset     - Asset to deposit (default: "USDC")
+ * @param {object} provider         - EIP-1193 provider (Privy wallet or window.ethereum)
  * @returns {{ zyfai: object, smartWallet: string }}
  */
-export async function depositToZyfai(amount, walletAddress, asset = "USDC") {
-  console.log(`[ZyFAI] depositToZyfai — amount: ${amount} ${asset}, wallet: ${walletAddress}`);
+export async function depositToZyfai(amount, walletAddress, asset = "USDC", provider = window.ethereum) {
+  console.log(`[ZyFAI] ── depositToZyfai ──────────────────────────────────`);
+  console.log(`[ZyFAI] amount: ${amount}, asset: ${asset}, wallet: ${walletAddress}`);
+  console.log(`[ZyFAI] chainId: ${CHAIN_ID}, provider type: ${provider?.constructor?.name ?? typeof provider}`);
 
   const sdk = createSdk();
-  await sdk.connectAccount(window.ethereum, CHAIN_ID);
 
-  const wallet = await sdk.getSmartWalletAddress(walletAddress, CHAIN_ID);
-  console.log(`[ZyFAI] Smart wallet: ${wallet.address}, deployed: ${wallet.isDeployed}`);
+  // Step 1 — connect account with the wallet's EIP-1193 provider
+  console.log("[ZyFAI] Step 1: connecting account...");
+  try {
+    await sdk.connectAccount(provider, CHAIN_ID);
+    console.log("[ZyFAI] Step 1 ✓ account connected");
+  } catch (e) {
+    console.error("[ZyFAI] Step 1 ✗ connectAccount failed:", e?.message, e?.code, e?.stack);
+    throw e;
+  }
 
+  // Step 2 — resolve smart wallet address
+  console.log("[ZyFAI] Step 2: getting smart wallet address...");
+  let wallet;
+  try {
+    wallet = await sdk.getSmartWalletAddress(walletAddress, CHAIN_ID);
+    console.log(`[ZyFAI] Step 2 ✓ smart wallet: ${wallet.address}, deployed: ${wallet.isDeployed}`);
+  } catch (e) {
+    console.error("[ZyFAI] Step 2 ✗ getSmartWalletAddress failed:", e?.message, e?.code, e?.stack);
+    throw e;
+  }
+
+  // Step 3 — deploy Safe if not yet on-chain
   if (!wallet.isDeployed) {
-    console.log("[ZyFAI] Deploying smart wallet...");
-    await sdk.deploySafe(walletAddress, CHAIN_ID, "conservative");
-  }
-
-  await sdk.createSessionKey(walletAddress, CHAIN_ID);
-  const user = await sdk.getUserDetails();
-  if (!user.hasActiveSessionKey) {
-    console.log("[ZyFAI] Session key not active — retrying...");
-    await sdk.createSessionKey(walletAddress, CHAIN_ID);
-    const retry = await sdk.getUserDetails();
-    if (!retry.hasActiveSessionKey) {
-      throw new Error("[ZyFAI] Session key activation failed. Please try again.");
+    console.log("[ZyFAI] Step 3: deploying safe...");
+    try {
+      await sdk.deploySafe(walletAddress, CHAIN_ID, "conservative");
+      console.log("[ZyFAI] Step 3 ✓ safe deployed");
+    } catch (e) {
+      console.error("[ZyFAI] Step 3 ✗ deploySafe failed:", e?.message, e?.code, e?.stack);
+      throw e;
     }
+  } else {
+    console.log("[ZyFAI] Step 3: safe already deployed — skipping");
   }
 
-  // USDC = 6 decimals, WETH = 18 decimals
+  // Step 4 — create / verify session key
+  console.log("[ZyFAI] Step 4: creating session key...");
+  try {
+    await sdk.createSessionKey(walletAddress, CHAIN_ID);
+    const user = await sdk.getUserDetails();
+    console.log(`[ZyFAI] Step 4: getUserDetails →`, JSON.stringify(user, null, 2));
+    if (!user.hasActiveSessionKey) {
+      console.warn("[ZyFAI] Step 4: session key not active — retrying once...");
+      await sdk.createSessionKey(walletAddress, CHAIN_ID);
+      const retry = await sdk.getUserDetails();
+      console.log(`[ZyFAI] Step 4 retry: getUserDetails →`, JSON.stringify(retry, null, 2));
+      if (!retry.hasActiveSessionKey) {
+        throw new Error("[ZyFAI] Session key activation failed after retry.");
+      }
+    }
+    console.log("[ZyFAI] Step 4 ✓ session key active");
+  } catch (e) {
+    console.error("[ZyFAI] Step 4 ✗ createSessionKey failed:", e?.message, e?.code, e?.stack);
+    throw e;
+  }
+
+  // Step 5 — build amount in base units and deposit
+  // USDC = 6 decimals  →  100 USDC  = "100000000"
+  // WETH = 18 decimals →  0.01 WETH = "10000000000000000"
   const amountUnits = asset === "WETH"
-    ? parseEther(amount.toString())
+    ? String(parseEther(amount.toString()))   // BigInt → string
     : String(Math.round(amount * 1_000_000));
 
-  console.log(`[ZyFAI] Depositing ${amountUnits} ${asset} units...`);
-  const result = await sdk.depositFunds(walletAddress, CHAIN_ID, amountUnits, { asset });
-  console.log("[ZyFAI] Deposit complete:", result);
+  console.log(`[ZyFAI] Step 5: depositing — ${amount} ${asset} = ${amountUnits} base units`);
+  let result;
+  try {
+    result = await sdk.depositFunds(walletAddress, CHAIN_ID, amountUnits, { asset });
+    console.log("[ZyFAI] Step 5 ✓ deposit complete:", JSON.stringify(result, null, 2));
+  } catch (e) {
+    console.error("[ZyFAI] Step 5 ✗ depositFunds failed:", e?.message, e?.code, e?.stack);
+    throw e;
+  }
 
   await sdk.disconnectAccount();
 
   return {
     zyfai: result,
-    smartWallet: result.smartWallet,
+    smartWallet: result.smartWallet ?? wallet.address,
   };
 }
 
@@ -228,7 +272,7 @@ export async function getDailyApyHistory(smartWalletAddress, period = "30D") {
  * @returns {{ eth: bigint, usdc: bigint }}
  */
 export async function checkWalletBalance(address) {
-  const client = createPublicClient({ chain: baseSepolia, transport: http() });
+  const client = createPublicClient({ chain: base, transport: http() });
   const eth = await client.getBalance({ address });
   let usdc = 0n;
   try {
@@ -252,10 +296,10 @@ export async function checkWalletBalance(address) {
  *
  * @param {string} walletAddress - User's EOA wallet address
  */
-export async function ensureSessionKey(walletAddress) {
+export async function ensureSessionKey(walletAddress, provider = window.ethereum) {
   console.log(`[ZyFAI] ensureSessionKey — wallet: ${walletAddress}`);
   const sdk = createSdk();
-  await sdk.connectAccount(window.ethereum, CHAIN_ID);
+  await sdk.connectAccount(provider, CHAIN_ID);
   const wallet = await sdk.getSmartWalletAddress(walletAddress, CHAIN_ID);
   if (!wallet.isDeployed) {
     await sdk.deploySafe(walletAddress, CHAIN_ID, "conservative");
@@ -290,6 +334,7 @@ export async function getTvl() {
 
 /**
  * Fetch the average APY for a specific ZyFAI strategy and asset.
+ * Tries the SDK first; falls back to direct REST if the SDK returns no data.
  * No wallet connection required — public read-only call.
  *
  * @param {"conservative"|"aggressive"} strategy
@@ -298,15 +343,52 @@ export async function getTvl() {
  */
 export async function getStrategyApy(strategy, asset) {
   console.log(`[ZyFAI] getStrategyApy — strategy: ${strategy}, asset: ${asset}`);
-  const sdk = createSdk();
-  const result = await sdk.getAPYPerStrategy(false, 7, strategy, 8453, asset);
-  console.log(`[ZyFAI] getStrategyApy(${strategy}, ${asset}) raw:`, result);
-  const raw = result?.data?.[0]?.average_apy ?? null;
+
+  // ── Primary: SDK (no connectAccount needed — read-only) ───────────────────
+  try {
+    const sdk = createSdk();
+    const result = await sdk.getAPYPerStrategy(false, 7, strategy, 8453, asset);
+    console.log(`[ZyFAI] getStrategyApy SDK raw (${strategy}, ${asset}):`, JSON.stringify(result, null, 2));
+    // Try every plausible field path
+    const raw =
+      result?.data?.[0]?.average_apy ??
+      result?.data?.average_apy       ??
+      result?.average_apy             ??
+      result?.apy                     ??
+      null;
+    console.log(`[ZyFAI] getStrategyApy SDK extracted average_apy:`, raw);
+    if (raw !== null && raw !== undefined) {
+      const n = parseFloat(raw);
+      if (isFinite(n)) {
+        const pct = n < 1 ? n * 100 : n;
+        console.log(`[ZyFAI] getStrategyApy SDK result (${strategy}, ${asset}): ${pct}%`);
+        return pct;
+      }
+    }
+    console.warn(`[ZyFAI] getStrategyApy SDK returned no usable APY — falling back to REST`);
+  } catch (err) {
+    console.warn(`[ZyFAI] getStrategyApy SDK failed — falling back to REST:`, err?.message ?? err);
+  }
+
+  // ── Fallback: direct REST v2 endpoint ─────────────────────────────────────
+  const url = `https://api.zyf.ai/api/v2/apy-per-strategy?strategy=${strategy}&tokenSymbol=${asset}&days=7`;
+  console.log(`[ZyFAI] getStrategyApy REST fallback: ${url}`);
+  const res  = await fetch(url);
+  const data = await res.json();
+  console.log(`[ZyFAI] getStrategyApy REST response (${strategy}, ${asset}):`, JSON.stringify(data, null, 2));
+  const raw =
+    data?.data?.[0]?.average_apy ??
+    data?.data?.average_apy       ??
+    data?.average_apy             ??
+    data?.apy                     ??
+    null;
+  console.log(`[ZyFAI] getStrategyApy REST extracted average_apy:`, raw);
   if (raw === null || raw === undefined) return null;
   const n = parseFloat(raw);
   if (!isFinite(n)) return null;
-  // Normalise: SDK may return decimal (0.072) or percent (7.2)
-  return n < 1 ? n * 100 : n;
+  const pct = n < 1 ? n * 100 : n;
+  console.log(`[ZyFAI] getStrategyApy REST result (${strategy}, ${asset}): ${pct}%`);
+  return pct;
 }
 
 /**
@@ -360,10 +442,10 @@ export async function getAvgApy() {
  * @param {string} walletAddress    - User's EOA wallet address
  * @param {number} [amount]         - Human-readable USDC amount, or omit for full withdrawal
  */
-export async function withdrawYield(walletAddress, amount) {
+export async function withdrawYield(walletAddress, amount, provider = window.ethereum) {
   console.log(`[ZyFAI] withdrawYield — wallet: ${walletAddress}, amount: ${amount ?? "all"}`);
   const sdk = createSdk();
-  await sdk.connectAccount(window.ethereum, CHAIN_ID);
+  await sdk.connectAccount(provider, CHAIN_ID);
 
   let result;
   if (amount !== undefined) {

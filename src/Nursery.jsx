@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
+import { useWallets } from "@privy-io/react-auth";
 import {
   depositToZyfai,
   ensureSessionKey,
@@ -475,6 +476,13 @@ function getNextStage(y) {
 }
 function fmt(n) { return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 export default function Nursery({ walletAddress, smartWalletAddress, character = "stabby" }) {
+  const { wallets } = useWallets();
+  // Returns the EIP-1193 provider for the active wallet (Privy or injected)
+  const getProvider = useCallback(async () => {
+    const w = wallets?.[0];
+    return (await w?.getEthereumProvider?.()) ?? window.ethereum;
+  }, [wallets]);
+
   const defaultName = character.charAt(0).toUpperCase() + character.slice(1);
   const petName     = localStorage.getItem(PET_NAME_KEY)?.trim() || "";
   const charName    = petName || defaultName;
@@ -698,13 +706,15 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     try {
       // Ensure session key exists before first tap this session
       if (walletAddress && !sessionKeyReady.current) {
-        await ensureSessionKey(walletAddress);
+        const provider = await getProvider();
+        await ensureSessionKey(walletAddress, provider);
         sessionKeyReady.current = true;
       }
 
       // On-chain deposit
       if (walletAddress) {
-        await depositToZyfai(cfg.amount, walletAddress, cfg.asset);
+        const provider = await getProvider();
+        await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider);
       }
 
       // Refresh yield counter from chain
@@ -746,7 +756,8 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     toast("⚠️ Unwinding position...");
     if (walletAddress) {
       try {
-        await withdrawYield(walletAddress);
+        const provider = await getProvider();
+        await withdrawYield(walletAddress, undefined, provider);
       } catch (err) {
         console.error("[Nursery] withdrawYield failed:", err);
       }
