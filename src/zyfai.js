@@ -18,9 +18,23 @@ const BALANCE_OF_ABI = [{
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function createSdk() {
-  return new ZyfaiSDK({
-    apiKey: import.meta.env.VITE_ZYFAI_API_KEY,
-  });
+  const apiKey = (import.meta.env.VITE_ZYFAI_API_KEY ?? '').trim();
+  console.log('[ZyFAI] createSdk — apiKey prefix:', apiKey.slice(0, 10) + '…', 'length:', apiKey.length);
+  const sdk = new ZyfaiSDK({ apiKey });
+
+  // ── CORS proxy ───────────────────────────────────────────────────────────
+  // The ZyFAI execution API (api.zyf.ai/api/v1) doesn't send CORS headers,
+  // so browser requests are blocked.  We redirect the SDK's internal axios
+  // client to our Vercel serverless proxy (/api/zyfai/…) which forwards the
+  // calls server-to-server, bypassing CORS entirely.
+  // The data client (defiapi.zyf.ai) handles CORS fine — leave it alone.
+  if (typeof window !== 'undefined') {
+    const proxyBase = `${window.location.origin}/api/zyfai`;
+    sdk.httpClient.client.defaults.baseURL = proxyBase;
+    console.log('[ZyFAI] createSdk — execution API rerouted to:', proxyBase);
+  }
+
+  return sdk;
 }
 
 // ── Exported functions ────────────────────────────────────────────────────────
