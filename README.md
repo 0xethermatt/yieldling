@@ -1,89 +1,106 @@
 # 🥚 Yieldling
+> The pet that pays you back.
 
-**Your savings, alive.**
+Yieldling is a Tamagotchi-style DeFi app where you adopt a digital creature powered by real yield. Deposit USDC once, ZyFAI automatically optimises your yield across DeFi protocols, and your pet thrives as your money works.
 
-Yieldling is a DeFi yield app that turns boring deposits into a living creature. Adopt a pet, deposit once, and watch it grow as your money earns automated yield through a wstETH looping strategy — no jargon, no dashboards.
-
-**Live app → [yieldling.vercel.app](https://yieldling.vercel.app)**
+**Live Demo:** https://yieldling.vercel.app
 
 ---
 
 ## What it does
 
-- Deposit USDC → ZyFAI converts it to wstETH and runs an automated looping strategy across Aave/Compound on Base
-- Your pet (Ziggy) evolves as your yield grows: Egg → Hatchling → Pup → Drake → Dragon → Starborn
-- Emergency Unwind returns your principal at any time
-- On-chain principal tracking via `YieldPetTreasury.sol` ensures yield can never dip into your deposit
+Users adopt one of two characters and deposit into ZyFAI's yield optimisation engine. The pet's health, mood, and evolution are directly tied to yield performance. No APYs, no dashboards, no jargon — just a creature that grows when your money works.
+
+- 🐾 **Stabby** (USDC) — calm, stable yields routed through Morpho and other lending protocols
+- ⚡ **Volty** (WETH) — ETH-native yield strategies *(coming soon)*
+
+Every interaction is a real on-chain transaction. Tapping Feed, Play, or Rest triggers a $2 USDC micro-deposit into ZyFAI via session keys — no wallet popups, no friction. As yield accumulates the creature evolves through four hand-drawn visual stages.
 
 ---
 
-## Tech stack
+## Tech Stack
 
-| Layer | Tech |
+| Layer | Technology |
 |---|---|
-| Frontend | React 18 + Vite 5 (JSX) |
-| Wallet | wagmi · viem · MetaMask |
-| Yield strategy | [ZyFAI SDK](https://docs.zyf.ai) — wstETH looping on Base via Lido + Aave |
-| Smart contract | Solidity 0.8.27 · Hardhat 2 · OpenZeppelin Ownable |
-| Testnet | Base Sepolia (chain 84532) |
-| Hosting | Vercel |
+| Frontend | React + Vite, deployed on Vercel |
+| Authentication | Privy (email, Google, wallet) |
+| Yield Infrastructure | ZyFAI SDK |
+| Yield Protocol | Morpho (via ZyFAI routing) |
+| Chain | Base mainnet (8453) |
 
 ---
 
-## Smart contract
+## ZyFAI Integration
 
-**YieldPetTreasury** — deployed on Base Sepolia
+Yieldling uses the ZyFAI SDK throughout:
 
-```
-0xC26c2CB8331DEB96A05fBc7Db5d26d1FAd341E3F
-```
+- `sdk.connectAccount()` — SIWE authentication with Privy wallet provider
+- `sdk.deploySafe()` — deploys a Safe smart wallet for each user
+- `sdk.createSessionKey()` — enables gasless micro-transactions on Feed/Play/Rest
+- `sdk.depositFunds()` — USDC deposits routed automatically to highest-yield pools
+- `sdk.getOnchainEarnings()` — real-time yield tracking powering the pet's XP system
+- `sdk.getDailyApyHistory()` — live APY display in the Nursery
+- `sdk.getAPYPerStrategy()` — live APY projections on the adopt screen
+- `getAvailableProtocols()` — active routes shown in the Under the Hood panel
 
-[View on BaseScan](https://sepolia.basescan.org/address/0xC26c2CB8331DEB96A05fBc7Db5d26d1FAd341E3F)
-
-The contract:
-- Holds wstETH principal per user
-- Exposes `getSpendableYield(address)` — current value minus original deposit
-- `withdrawYield()` enforces that only yield (never principal) can be taken
-- `emergencyUnwind()` — owner-only, returns full principal instantly
-
----
-
-## Project structure
-
-```
-src/
-  App.jsx          # Landing, Adopt, Nav — routing + wallet state
-  Nursery.jsx      # Pet UI — yield display, needs, evolution overlay
-  zyfai.js         # ZyFAI SDK + viem contract calls
-contracts/
-  YieldPetTreasury.sol
-scripts/
-  deploy.js        # Hardhat deploy → Base Sepolia
-deployments.json   # Deployed addresses by chain ID
-```
+Capital is automatically spread across the highest-yielding pools on Base. Currently routing through Morpho's High Yield Clearstar USDC pool.
 
 ---
 
-## Local development
+## How the Pet Works
+
+| Yield Earned | Evolution Stage |
+|---|---|
+| $0 | 🥚 Egg (just hatched) |
+| $1 | 🐾 Hatchling |
+| $10 | 🐲 Drake |
+| $50 | 🐉 Legend |
+
+Pet health reflects ZyFAI account status. Feed/Play/Rest buttons trigger $2 USDC micro-deposits, refilling need bars and earning XP toward the next evolution. Need bars deplete slowly over 24-48 hours, bringing users back daily.
+
+---
+
+## Running Locally
 
 ```bash
+git clone https://github.com/0xethermatt/yieldling
+cd yieldling
 npm install
-npm run dev
 ```
 
 Create a `.env` file:
 
 ```
-VITE_ZYFAI_API_KEY=your_key_here
-VITE_CONTRACT_ADDRESS=0xC26c2CB8331DEB96A05fBc7Db5d26d1FAd341E3F
-PRIVATE_KEY=your_wallet_private_key   # for Hardhat deployments only
+VITE_ZYFAI_API_KEY=your_zyfai_api_key
+VITE_PRIVY_APP_ID=your_privy_app_id
 ```
-
-Get a ZyFAI API key at [sdk.zyf.ai](https://sdk.zyf.ai).
-
-## Deploy contract
 
 ```bash
-npx hardhat compile
-npx hardhat run scripts/deploy.js --network baseSepolia
+npm run dev
 ```
+
+---
+
+## Screenshots
+
+| Landing | Character Select | Nursery |
+|---|---|---|
+| "The pet that pays you back" | Choose Stabby or Volty | Live yield, pet evolution |
+
+---
+
+## Hackathon
+
+Built for the **ZyFAI Native Wallet & Subaccount** track at [Synthesis Hackathon](https://synthesis.md/hack).
+
+**Track criteria met:**
+- ✅ ZyFAI subaccount correctly deployed and managed with session key scoping
+- ✅ Yield mechanism invisible to end user
+- ✅ Consumer app with zero-visible-DeFi yield experience
+- ✅ Real deposits actively earning on Base mainnet via Morpho
+
+---
+
+## Team
+
+Built by [@0xethermatt](https://github.com/0xethermatt)
