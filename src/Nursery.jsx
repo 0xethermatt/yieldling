@@ -574,8 +574,8 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   // Primary: getDailyApyHistory(smartWalletAddress, "7D") → label "Current APY"
   // Fallback: getStrategyApy(strategy, asset)             → label "Est. APY"
   useEffect(() => {
-    const strategy = character === "volty" ? "aggressive" : "conservative";
-    const asset    = character === "volty" ? "WETH"       : "USDC";
+    const strategy = "aggressive"; // all characters use aggressive strategy
+    const asset    = character === "volty" ? "WETH" : "USDC";
 
     const fetchApy = async () => {
       // ── Primary: smart wallet's own 7-day APY history ────────────────────
@@ -645,8 +645,17 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     const poll = async () => {
       try {
         const earnings = await getYieldEarned(smartWalletAddress);
-        const usdc = earnings["USDC"] ?? earnings["usdc"] ?? 0;
-        setYieldEarned(usdc);
+        console.log("[Nursery] getYieldEarned raw:", JSON.stringify(earnings));
+        const raw  = earnings["USDC"] ?? earnings["usdc"] ?? earnings["WETH"] ?? earnings["weth"] ?? 0;
+        const val  = typeof raw === "number" ? raw : parseFloat(raw) || 0;
+        // Sanity cap: yield can't exceed deposited × 200% APY × 1 year.
+        // If ZyFAI returns a stale/incorrect value larger than deposited, ignore it.
+        const maxReasonable = deposited * 2;
+        if (val > 0 && (deposited === 0 || val <= maxReasonable)) {
+          setYieldEarned(val);
+        } else if (val > maxReasonable) {
+          console.warn("[Nursery] getYieldEarned value looks wrong (> 2× deposited), ignoring:", val);
+        }
       } catch (err) {
         console.error("[Nursery] getYieldEarned failed:", err);
       }
@@ -731,8 +740,10 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       if (smartWalletAddress) {
         try {
           const earnings = await getYieldEarned(smartWalletAddress);
-          const val = earnings[cfg.asset] ?? earnings[cfg.asset.toLowerCase()] ?? 0;
-          setYieldEarned(val);
+          const raw = earnings[cfg.asset] ?? earnings[cfg.asset.toLowerCase()] ?? 0;
+          const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
+          const maxReasonable = (deposited + cfg.amount) * 2;
+          if (val > 0 && val <= maxReasonable) setYieldEarned(val);
         } catch (e) {
           console.error("[Nursery] yield refresh failed:", e);
         }
