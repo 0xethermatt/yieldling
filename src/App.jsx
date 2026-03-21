@@ -192,6 +192,7 @@ const css = `
   /* ── MOBILE ── */
   @media (max-width: 430px) {
     .nav { padding: 12px 16px; }
+    .nav-tabs { display: none; }
     .nav-wallet { padding: 8px 14px; font-size: 12px; }
     .hero-tag { font-size: 10px; letter-spacing: 1.5px; padding: 5px 12px; margin-bottom: 28px; }
     .hero-egg { margin-bottom: 32px; }
