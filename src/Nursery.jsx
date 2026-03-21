@@ -648,17 +648,9 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         console.log("[Nursery] getYieldEarned raw:", JSON.stringify(earnings));
         const raw = earnings["USDC"] ?? earnings["usdc"] ?? earnings["WETH"] ?? earnings["weth"] ?? 0;
         const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
-        // Don't update until deposited is known — avoids race where yield fires
-        // before deposited fetch, making the cap useless.
-        if (!depositLoaded) return;
-        // Sanity cap: yield can't exceed deposited × 200% APY × 1 year.
-        // ZyFAI sometimes returns stale/incorrect values for fresh accounts.
-        const maxReasonable = deposited * 2;
-        if (val > 0 && val <= maxReasonable) {
+        console.log("[Nursery] getYieldEarned parsed val:", val);
+        if (isFinite(val) && val >= 0) {
           setYieldEarned(val);
-        } else {
-          console.warn("[Nursery] ignoring unreasonable yield:", val, "deposited:", deposited);
-          setYieldEarned(0); // reset any previously-set bad value
         }
       } catch (err) {
         console.error("[Nursery] getYieldEarned failed:", err);
@@ -667,7 +659,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     poll();
     const iv = setInterval(poll, 30_000);
     return () => clearInterval(iv);
-  }, [smartWalletAddress, depositLoaded, deposited]);
+  }, [smartWalletAddress]);
   useEffect(() => {
     if (prevStageName && prevStageName !== stage.name) {
       setShowEvo(true);
@@ -746,8 +738,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
           const earnings = await getYieldEarned(smartWalletAddress);
           const raw = earnings[cfg.asset] ?? earnings[cfg.asset.toLowerCase()] ?? 0;
           const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
-          const maxReasonable = (deposited + cfg.amount) * 2;
-          if (val > 0 && val <= maxReasonable) setYieldEarned(val);
+          if (isFinite(val) && val >= 0) setYieldEarned(val);
         } catch (e) {
           console.error("[Nursery] yield refresh failed:", e);
         }

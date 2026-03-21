@@ -224,18 +224,27 @@ export async function getPositionDetails(walletAddress, chainId = 8453) {
     Array.isArray(result)                       ? result                     :
     [];
 
+  // Actual API field names: protocol_name, token_symbol, pool, pool_apy, underlyingAmount
   return entries
-    .filter(p => (p.protocol ?? p.name ?? "").length > 0)
-    .map(p => ({
-      protocol: p.protocol ?? p.name ?? "Unknown",
-      token:    p.token    ?? p.asset ?? p.symbol ?? "",
-      apy: (() => {
-        const n = parseFloat(p.apy ?? p.APY ?? p.apyPercent ?? 0);
-        if (!isFinite(n)) return "—";
-        return n < 1 ? (n * 100).toFixed(2) : n.toFixed(2);
-      })(),
-      value: p.value ?? p.balance ?? p.amount ?? 0,
-    }));
+    .filter(p => (p.protocol_name ?? p.protocol ?? p.name ?? "").length > 0)
+    .map(p => {
+      const sym      = p.token_symbol ?? p.token ?? p.asset ?? p.symbol ?? "USDC";
+      const decimals = sym === "WETH" ? 1e18 : 1e6;
+      const rawAmt   = p.underlyingAmount ?? p.value ?? p.balance ?? "0";
+      const value    = typeof rawAmt === "string" && rawAmt.startsWith("0x")
+        ? Number(BigInt(rawAmt)) / decimals
+        : Number(rawAmt) / decimals;
+      const apyRaw   = p.pool_apy ?? p.apy ?? p.APY ?? p.apyPercent ?? 0;
+      const apyN     = parseFloat(apyRaw);
+      // Include pool name in the protocol label: "Morpho · HighYield Clearstar USDC"
+      const poolSuffix = p.pool ? ` · ${p.pool}` : "";
+      return {
+        protocol: `${p.protocol_name ?? p.protocol ?? p.name ?? "Unknown"}${poolSuffix}`,
+        token:    sym,
+        apy:      !isFinite(apyN) ? "—" : (apyN < 1 ? (apyN * 100).toFixed(2) : apyN.toFixed(2)),
+        value:    isFinite(value) ? value : 0,
+      };
+    });
 }
 
 /**
@@ -256,11 +265,20 @@ export async function getPositions(walletAddress, chainId = 8453) {
   const p = result?.portfolio;
 
   // Extract deployed-positions total (funds actively in yield protocols)
+  // Actual API response shape: positions[].underlyingAmount = "20000184" (USDC 6 decimals)
   let deployedTotal = 0;
   if (Array.isArray(p?.positions) && p.positions.length > 0) {
-    deployedTotal = p.positions.reduce(
-      (s, pos) => s + (pos.value ?? pos.balance ?? pos.amount ?? pos.valueUsdc ?? 0), 0
-    );
+    deployedTotal = p.positions.reduce((s, pos) => {
+      const sym      = pos.token_symbol ?? pos.symbol ?? pos.token ?? "USDC";
+      const decimals = sym === "WETH" ? 1e18 : 1e6;
+      const raw      = pos.underlyingAmount ?? pos.value ?? pos.balance ?? "0";
+      // underlyingAmount may be a decimal string ("20000184") or hex ("0x1312db7")
+      const parsed   = typeof raw === "string" && raw.startsWith("0x")
+        ? Number(BigInt(raw)) / decimals
+        : Number(raw) / decimals;
+      return s + (isFinite(parsed) ? parsed : 0);
+    }, 0);
+    console.log("[ZyFAI] getPositions deployedTotal from positions:", deployedTotal);
   }
   if (deployedTotal === 0) {
     const scalar =
