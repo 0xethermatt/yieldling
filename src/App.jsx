@@ -1137,10 +1137,16 @@ function Adopt({ setScreen, setSmartWalletAddress, setCharacter }) {
   const yearlyYield  = (selectedApy !== null && amountValid)
     ? amountNum * (selectedApy / 100)
     : null;
-  // Format yield in the correct unit for the selected character
-  const fmtYield = (n) => isUSDC
-    ? `$${fmt(n)}`
-    : `${n.toFixed(4)} ETH`;
+  // Format yield in the correct unit for the selected character.
+  // For ETH: use enough decimal places so tiny values never show as 0.0000.
+  // e.g. 0.0015 ETH × 1.7% / 12 = 0.000002125 → shown as "0.000002 ETH"
+  const fmtEth = (n) => {
+    if (n === 0) return "0 ETH";
+    // Find the first significant digit and show 2 sig figs beyond it
+    const places = Math.max(4, Math.ceil(-Math.log10(n)) + 2);
+    return `${n.toFixed(places)} ETH`;
+  };
+  const fmtYield = (n) => isUSDC ? `$${fmt(n)}` : fmtEth(n);
 
   return (
     <div className="screen char-select-wrap">
