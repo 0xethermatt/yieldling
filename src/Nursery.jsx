@@ -404,6 +404,55 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
   text-align: center;
 }
 .tip-dismiss:hover { background: rgba(106,255,212,.15); }
+/* + Deposit button */
+.deposit-btn-row { display: flex; justify-content: center; padding: 2px 16px 10px; }
+.deposit-btn {
+  display: flex; align-items: center; gap: 7px;
+  background: rgba(124,106,255,.12); border: 1px solid rgba(124,106,255,.4);
+  color: var(--purple); font-family: var(--font); font-size: 13px; font-weight: 800;
+  padding: 9px 24px; border-radius: 20px; cursor: pointer; transition: all .2s;
+  letter-spacing: .3px;
+}
+.deposit-btn:hover { background: rgba(124,106,255,.22); border-color: var(--purple); box-shadow: 0 0 14px rgba(124,106,255,.25); }
+.deposit-btn:active { transform: scale(.96); }
+/* custom deposit modal */
+.modal-overlay {
+  position: fixed; inset: 0; z-index: 300;
+  display: flex; align-items: flex-end; justify-content: center;
+  background: rgba(4,6,14,.7); backdrop-filter: blur(4px);
+}
+.modal-drawer {
+  width: 100%; max-width: 430px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 24px 24px 0 0; padding: 28px 24px 36px;
+  animation: drawerUp .22s cubic-bezier(.23,1,.32,1);
+}
+@keyframes drawerUp { from { transform: translateY(100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+.modal-title { font-family: var(--display); font-style: italic; font-size: 22px; color: var(--purple); margin-bottom: 4px; }
+.modal-hint { font-size: 12px; color: var(--dim); margin-bottom: 20px; }
+.modal-input {
+  width: 100%; background: var(--surface); border: 1.5px solid var(--border);
+  border-radius: 14px; color: var(--text); font-family: var(--mono); font-size: 22px;
+  font-weight: 700; padding: 14px 16px; outline: none; box-sizing: border-box;
+  transition: border-color .2s;
+}
+.modal-input:focus { border-color: var(--purple); }
+.modal-input::placeholder { color: var(--dim); font-size: 18px; }
+.modal-min { font-size: 11px; color: var(--dim); margin-top: 7px; margin-left: 2px; }
+.modal-actions { display: flex; gap: 10px; margin-top: 20px; }
+.modal-confirm {
+  flex: 1; background: linear-gradient(135deg,var(--purple),#a06aff);
+  border: none; border-radius: 14px; color: #fff; font-family: var(--font);
+  font-size: 15px; font-weight: 800; padding: 14px; cursor: pointer; transition: opacity .2s;
+}
+.modal-confirm:hover { opacity: .88; }
+.modal-confirm:disabled { opacity: .45; cursor: not-allowed; }
+.modal-cancel {
+  flex: 0 0 auto; background: none; border: 1px solid var(--border);
+  border-radius: 14px; color: var(--dim); font-family: var(--font);
+  font-size: 15px; font-weight: 700; padding: 14px 20px; cursor: pointer; transition: all .2s;
+}
+.modal-cancel:hover { border-color: var(--dim); color: var(--text); }
 `;
 const styleEl = document.createElement("style");
 styleEl.textContent = css;
@@ -463,9 +512,11 @@ function loadNeeds() {
 
 // Per-character micro-transaction amounts
 const TAP_CFG = {
-  stabby: { amount: 1,      asset: "USDC", floatLabel: "+$1",         toastLabel: "+$1 deposited"       },
+  stabby: { amount: 2,      asset: "USDC", floatLabel: "+$2",         toastLabel: "+$2 deposited"       },
   volty:  { amount: 0.0005, asset: "WETH", floatLabel: "+0.0005 ETH", toastLabel: "+0.0005 ETH deposited" },
 };
+const DEPOSIT_MIN = { USDC: 1.50, WETH: 0.001 };
+const DEPOSIT_HINT = { USDC: "Minimum $1.50 USDC", WETH: "Minimum 0.001 WETH" };
 
 function getStage(y) {
   let s = STAGES[0];
@@ -513,6 +564,9 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   const [tapping, setTapping] = useState(null);      // "hunger"|"mood"|"energy"|null
   const [reminding, setReminding] = useState({});    // keys currently pulsing
   const [tooltip, setTooltip] = useState(null);      // active tooltip text or null
+  const [showDepositModal, setShowDepositModal] = useState(false);
+  const [customAmount, setCustomAmount]         = useState("");
+  const [depositing, setDepositing]             = useState(false);
   const petRef = useRef(null);
   const sparkleId = useRef(0);
   const xpId = useRef(0);
@@ -777,6 +831,44 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     setTimeout(() => setPetState("danger"), 2200);
     setTimeout(() => { setPetState("ok"); toast("✅ Unwind complete. Principal safe!"); }, 5500);
   };
+  const handleCustomDeposit = async () => {
+    const cfg    = TAP_CFG[character] ?? TAP_CFG.stabby;
+    const amount = parseFloat(customAmount);
+    const min    = DEPOSIT_MIN[cfg.asset];
+    if (!isFinite(amount) || amount < min) {
+      toast(`❌ Minimum is ${cfg.asset === "WETH" ? "0.001 WETH" : "$1.50 USDC"}`);
+      return;
+    }
+    setDepositing(true);
+    try {
+      if (walletAddress) {
+        const provider = await getProvider();
+        await depositToZyfai(amount, walletAddress, cfg.asset, provider, "aggressive");
+        setDeposited(prev => prev + amount);
+      }
+      if (smartWalletAddress) {
+        try {
+          const earnings = await getYieldEarned(smartWalletAddress);
+          const raw = earnings[cfg.asset] ?? earnings[cfg.asset.toLowerCase()] ?? 0;
+          const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
+          if (isFinite(val) && val >= 0) setYieldEarned(val);
+        } catch (e) { /* non-fatal */ }
+      }
+      const label = cfg.asset === "WETH" ? `+${amount} ETH` : `+$${amount}`;
+      toast(`💰 Deposited! ${label}`);
+      spawnXpFloat(195, 300, label);
+      ["🌟","✨","💫"].forEach((e, i) =>
+        setTimeout(() => spawnSparkle(195 + (Math.random()-0.5)*80, 280, e), i * 120)
+      );
+      setShowDepositModal(false);
+      setCustomAmount("");
+    } catch (err) {
+      console.error("[Nursery] custom deposit failed:", err);
+      toast("❌ Deposit failed — try again");
+    } finally {
+      setDepositing(false);
+    }
+  };
   const needConfig = [
     { key: "hunger", icon: "🍖", label: "Feed",  color: "#ff6ab0", tip: TIP_FEED },
     { key: "mood",   icon: "✨", label: "Play",  color: "#6affd4", tip: TIP_PLAY },
@@ -799,6 +891,50 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
             </div>
           </div>
         )}
+        {/* Custom deposit modal */}
+        {showDepositModal && (() => {
+          const cfg  = TAP_CFG[character] ?? TAP_CFG.stabby;
+          const amt  = parseFloat(customAmount);
+          const min  = DEPOSIT_MIN[cfg.asset];
+          const valid = isFinite(amt) && amt >= min;
+          const placeholder = cfg.asset === "WETH" ? "0.001" : "2.00";
+          return (
+            <div className="modal-overlay" onClick={() => !depositing && setShowDepositModal(false)}>
+              <div className="modal-drawer" onClick={e => e.stopPropagation()}>
+                <div className="modal-title">Deposit {cfg.asset}</div>
+                <div className="modal-hint">Add funds to your {character === "volty" ? "Volty" : "Stabby"} yield strategy</div>
+                <input
+                  className="modal-input"
+                  type="number"
+                  inputMode="decimal"
+                  placeholder={placeholder}
+                  min={min}
+                  step={cfg.asset === "WETH" ? "0.001" : "0.50"}
+                  value={customAmount}
+                  onChange={e => setCustomAmount(e.target.value)}
+                  autoFocus
+                />
+                <div className="modal-min">{DEPOSIT_HINT[cfg.asset]}</div>
+                <div className="modal-actions">
+                  <button
+                    className="modal-confirm"
+                    disabled={!valid || depositing}
+                    onClick={handleCustomDeposit}
+                  >
+                    {depositing ? "Depositing…" : `Deposit ${cfg.asset === "WETH" ? `${customAmount || "0"} ETH` : `$${customAmount || "0"}`}`}
+                  </button>
+                  <button
+                    className="modal-cancel"
+                    disabled={depositing}
+                    onClick={() => setShowDepositModal(false)}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
         {/* Toast */}
         {showToast && <div className="toast">{toastMsg}</div>}
         {/* Sparkles */}
@@ -958,6 +1094,12 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
               </button>
             );
           })}
+        </div>
+        {/* + Deposit */}
+        <div className="deposit-btn-row">
+          <button className="deposit-btn" onClick={() => { setCustomAmount(""); setShowDepositModal(true); }}>
+            <span style={{ fontSize: 16 }}>＋</span> Deposit
+          </button>
         </div>
         {/* Emergency Unwind */}
         <div className="unwind-row">
