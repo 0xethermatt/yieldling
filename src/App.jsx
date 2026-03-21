@@ -24,6 +24,9 @@ document.head.appendChild(fontLink);
 // ── CSS ──────────────────────────────────────────────────────────────────────
 const css = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html {
+    overflow-x: hidden; max-width: 100vw; width: 100%;
+  }
   :root {
     --bg: #080810;
     --surface: #10101c;
@@ -41,7 +44,7 @@ const css = `
     --font: 'Nunito', sans-serif;
     --mono: 'Space Mono', monospace;
   }
-  body { background: var(--bg); color: var(--text); font-family: var(--font); }
+  body { background: var(--bg); color: var(--text); font-family: var(--font); overflow-x: hidden; max-width: 100vw; width: 100%; }
   /* ── NAV ── */
   .nav {
     position: fixed; top: 0; left: 0; right: 0; z-index: 100;
@@ -98,7 +101,7 @@ const css = `
   }
   .gate-btn:hover { transform: translateY(-3px); box-shadow: 0 16px 48px rgba(124,106,255,.5); }
   /* ── SCREENS ── */
-  .screen { min-height: 100vh; padding-top: 70px; position: relative; }
+  .screen { min-height: 100vh; padding-top: 70px; position: relative; overflow-x: hidden; max-width: 100vw; }
   /* starfield */
   .stars {
     position: fixed; inset: 0; pointer-events: none; z-index: 0;
@@ -117,6 +120,7 @@ const css = `
     display: flex; flex-direction: column; align-items: center;
     justify-content: center; text-align: center;
     padding: 120px 24px 80px; position: relative;
+    overflow-x: hidden; max-width: 100%;
   }
   .landing-glow {
     position: absolute; width: 600px; height: 600px; border-radius: 50%;
@@ -189,6 +193,7 @@ const css = `
   .adopt-wrap {
     display: flex; align-items: center; justify-content: center;
     padding: 100px 24px 60px; min-height: 100vh;
+    overflow-x: hidden; max-width: 100%;
   }
   .adopt-card {
     background: var(--surface); border: 1px solid var(--border);
@@ -444,6 +449,7 @@ const css = `
   .char-select-wrap {
     display: flex; align-items: center; justify-content: center;
     padding: 100px 16px 60px; min-height: 100vh;
+    overflow-x: hidden; max-width: 100%;
   }
   .char-select-inner {
     background: var(--surface); border: 1px solid var(--border);
@@ -616,6 +622,7 @@ const css = `
   .fund-wrap {
     display: flex; align-items: center; justify-content: center;
     padding: 100px 24px 60px; min-height: 100vh;
+    overflow-x: hidden; max-width: 100%;
   }
   .fund-card {
     background: var(--surface); border: 1px solid var(--border);

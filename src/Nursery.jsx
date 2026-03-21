@@ -34,6 +34,7 @@ fontLink.href = "https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;70
 document.head.appendChild(fontLink);
 const css = `
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { overflow-x: hidden; max-width: 100vw; width: 100%; }
 :root {
   --bg: #080c14;
   --surface: #0e1420;
@@ -49,7 +50,7 @@ const css = `
   --mono: 'Space Mono', monospace;
   --display: 'Anybody', var(--font);
 }
-body { background: var(--bg); color: var(--text); font-family: var(--font); margin: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font); margin: 0; overflow-x: hidden; max-width: 100vw; width: 100%; }
 /* stars */
 .stars {
   position: fixed; inset: 0; pointer-events: none; z-index: 0;
@@ -65,12 +66,12 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 }
 /* phone frame */
 .phone {
-  width: 390px; min-height: 844px;
+  width: 100%; max-width: 390px; min-height: 844px;
   margin: 0 auto;
   position: relative; z-index: 1;
   display: flex; flex-direction: column;
   background: var(--bg);
-  overflow: visible;
+  overflow-x: hidden;
 }
 /* top bar */
 .topbar {
@@ -105,6 +106,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 .stat-cards {
   display: grid; grid-template-columns: 1fr 1fr;
   gap: 10px; padding: 0 16px; flex-shrink: 0;
+  max-width: 100%; overflow: hidden;
 }
 .stat-card {
   background: var(--surface); border-radius: 16px;
@@ -944,7 +946,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
                  : hasActiveDeposit                        ? "linear-gradient(90deg,#6affd4,#4af0b8)"
                  : "rgba(90,96,128,.35)";         // no active deposit → grey
   return (
-    <div style={{ background: "var(--bg)", minHeight: "100vh", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "90px 0 40px", overflowY: "auto" }}>
+    <div style={{ background: "var(--bg)", minHeight: "100vh", display: "flex", alignItems: "flex-start", justifyContent: "center", padding: "90px 0 40px", overflowY: "auto", overflowX: "hidden", maxWidth: "100vw", width: "100%", touchAction: "pan-y" }}>
       <div className="stars" />
       <div className="phone">
         {/* Tooltip overlay — tap backdrop or Dismiss to close */}
