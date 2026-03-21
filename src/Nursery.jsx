@@ -545,7 +545,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       // ── Primary: real positions for this wallet ───────────────────────────
       if (walletAddress) {
         try {
-          const details = await getPositionDetails(walletAddress, 8453);
+          const details = await getPositionDetails(walletAddress, 8453, smartWalletAddress || null);
           if (details.length > 0) {
             setPositions(details);
             setPositionsLoaded(true);
@@ -619,14 +619,10 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     if (!walletAddress) return;
     const fetchDeposited = async () => {
       try {
-        const posVal = await getPositions(walletAddress, 8453);
+        // Pass smartWalletAddress so getPositions queries the Safe (where DeFi positions live)
+        const posVal = await getPositions(walletAddress, 8453, smartWalletAddress || null);
         if (posVal > 0) {
           setDeposited(posVal);
-        } else if (smartWalletAddress) {
-          // No deployed positions yet — read Safe's token balance directly
-          const cfg   = TAP_CFG[character] ?? TAP_CFG.stabby;
-          const safeVal = await getSafeBalance(smartWalletAddress, cfg.asset);
-          if (typeof safeVal === "number" && isFinite(safeVal)) setDeposited(safeVal);
         }
       } catch (err) {
         console.error("[Nursery] getPositions failed:", err);

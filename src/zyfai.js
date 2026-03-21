@@ -206,12 +206,27 @@ export async function getAggressiveOpportunities(chainId = 8453) {
  *
  * @param {string} walletAddress
  * @param {number} [chainId=8453]
+ * @param {string} [safeAddress=null] - Pre-resolved Safe/smart wallet address
  * @returns {Array<{ protocol: string, token: string, apy: string, value: number }>}
  */
-export async function getPositionDetails(walletAddress, chainId = 8453) {
-  console.log(`[ZyFAI] getPositionDetails — wallet: ${walletAddress}, chainId: ${chainId}`);
+export async function getPositionDetails(walletAddress, chainId = 8453, safeAddress = null) {
+  console.log(`[ZyFAI] getPositionDetails — wallet: ${walletAddress}, safe: ${safeAddress}, chainId: ${chainId}`);
   const sdk = createSdk();
-  const result = await sdk.getPositions(walletAddress, chainId);
+
+  // Resolve Safe address (positions live on the Safe, not the EOA)
+  let resolvedSafe = safeAddress;
+  if (!resolvedSafe) {
+    try {
+      const safeInfo = await sdk.getSmartWalletByEOA(walletAddress);
+      resolvedSafe   = safeInfo?.agent ?? safeInfo?.smartWallet ?? safeInfo?.address;
+    } catch (e) {
+      console.warn("[ZyFAI] getPositionDetails getSmartWalletByEOA failed:", e.message);
+    }
+  }
+
+  const queryAddr = resolvedSafe ?? walletAddress;
+  console.log(`[ZyFAI] getPositionDetails querying sdk.getPositions with: ${queryAddr}`);
+  const result = await sdk.getPositions(queryAddr, chainId);
   console.log("[ZyFAI] getPositionDetails raw:", JSON.stringify(result, null, 2));
 
   // SDK wraps data in result.portfolio; try every plausible array location
@@ -251,14 +266,33 @@ export async function getPositionDetails(walletAddress, chainId = 8453) {
  * Fetch the current positions / total deposited value for a wallet.
  * No wallet connection required — public read-only call.
  *
- * @param {string} walletAddress
+ * @param {string} walletAddress      - EOA wallet address
  * @param {number} [chainId=8453]
+ * @param {string} [safeAddress=null] - Pre-resolved Safe/smart wallet address (avoids extra lookup)
  * @returns {number} Total deposited value in USD, or 0 on failure
  */
-export async function getPositions(walletAddress, chainId = 8453) {
-  console.log(`[ZyFAI] getPositions — wallet: ${walletAddress}, chainId: ${chainId}`);
+export async function getPositions(walletAddress, chainId = 8453, safeAddress = null) {
+  console.log(`[ZyFAI] getPositions — wallet: ${walletAddress}, safeAddress: ${safeAddress}, chainId: ${chainId}`);
   const sdk = createSdk();
-  const result = await sdk.getPositions(walletAddress, chainId);
+
+  // ── Resolve Safe address ──────────────────────────────────────────────────
+  // ZyFAI positions live on the Safe (smart wallet), not the EOA.
+  // If the caller already knows the safe address, use it directly.
+  let resolvedSafe = safeAddress;
+  if (!resolvedSafe) {
+    try {
+      const safeInfo   = await sdk.getSmartWalletByEOA(walletAddress);
+      resolvedSafe     = safeInfo?.agent ?? safeInfo?.smartWallet ?? safeInfo?.address;
+      console.log("[ZyFAI] getPositions resolved Safe via getSmartWalletByEOA:", resolvedSafe, "raw:", JSON.stringify(safeInfo));
+    } catch (e) {
+      console.warn("[ZyFAI] getPositions getSmartWalletByEOA failed:", e.message);
+    }
+  }
+
+  // Query positions using the Safe address (holds the actual DeFi positions)
+  const queryAddr = resolvedSafe ?? walletAddress;
+  console.log(`[ZyFAI] getPositions querying sdk.getPositions with: ${queryAddr}`);
+  const result = await sdk.getPositions(queryAddr, chainId);
   console.log("[ZyFAI] getPositions raw:", JSON.stringify(result, null, 2));
 
   // SDK wraps data in result.portfolio (shape: { totalBalance, totalBalanceUsdc, positions, ... })
@@ -298,18 +332,15 @@ export async function getPositions(walletAddress, chainId = 8453) {
   // ── Also add the Safe's on-chain pending balance ─────────────────────────
   // Funds sitting in the Safe (not yet deployed to a strategy) are real
   // deposited value — sum them with the deployed total.
-  try {
-    const safeInfo = await sdk.getSmartWalletByEOA(walletAddress);
-    const safeAddr = safeInfo?.smartWallet;
-    console.log("[ZyFAI] getPositions safeAddr:", safeAddr, "deployedTotal:", deployedTotal);
-    if (safeAddr) {
-      const usdcBal = await getSafeBalance(safeAddr, "USDC");
-      const wethBal = await getSafeBalance(safeAddr, "WETH");
-      console.log("[ZyFAI] getPositions safe balance — USDC:", usdcBal, "WETH:", wethBal);
+  if (resolvedSafe) {
+    try {
+      const usdcBal = await getSafeBalance(resolvedSafe, "USDC");
+      const wethBal = await getSafeBalance(resolvedSafe, "WETH");
+      console.log("[ZyFAI] getPositions safe balance — USDC:", usdcBal, "WETH:", wethBal, "deployed:", deployedTotal);
       return deployedTotal + usdcBal + wethBal;
+    } catch (e) {
+      console.warn("[ZyFAI] getPositions safe balance check failed:", e.message);
     }
-  } catch (e) {
-    console.warn("[ZyFAI] getPositions safe balance check failed:", e.message);
   }
 
   return deployedTotal;
