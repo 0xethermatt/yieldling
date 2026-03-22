@@ -1,5 +1,5 @@
 import { ZyfaiSDK } from "@zyfai/sdk";
-import { createPublicClient, http, parseEther } from "viem";
+import { createPublicClient, createWalletClient, custom, http, parseEther } from "viem";
 import { base } from "viem/chains";
 
 // ── Config ────────────────────────────────────────────────────────────────────
@@ -576,17 +576,30 @@ export async function getEthBalance(address) {
  */
 async function wrapEthToWeth(amountEth, provider, walletAddress) {
   const amountWei = parseEther(amountEth.toString());
-  const hexValue  = "0x" + amountWei.toString(16);
   console.log(`[ZyFAI] wrapEthToWeth: ${amountEth} ETH = ${amountWei} wei`);
 
-  const txHash = await provider.request({
-    method: "eth_sendTransaction",
-    params: [{
-      from:  walletAddress,
-      to:    WETH_ADDRESS,
-      value: hexValue,
-      data:  "0xd0e30db0", // deposit() selector
-    }],
+  // Use viem walletClient.writeContract so the ABI is encoded correctly.
+  // Raw eth_sendTransaction with a hex data selector was being reinterpreted
+  // by some providers as a transfer() call instead of deposit().
+  const walletClient = createWalletClient({
+    account: walletAddress,
+    chain: base,
+    transport: custom(provider),
+  });
+
+  const WETH_DEPOSIT_ABI = [{
+    name: "deposit",
+    type: "function",
+    stateMutability: "payable",
+    inputs: [],
+    outputs: [],
+  }];
+
+  const txHash = await walletClient.writeContract({
+    address: WETH_ADDRESS,
+    abi: WETH_DEPOSIT_ABI,
+    functionName: "deposit",
+    value: amountWei,
   });
   console.log(`[ZyFAI] wrapEthToWeth tx submitted: ${txHash} — waiting for confirmation...`);
 
