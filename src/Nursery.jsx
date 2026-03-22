@@ -7,7 +7,6 @@ import {
   getYieldEarned,
   getDailyApyHistory,
   getStrategyApy,
-  getConservativeOpportunities,
   getAggressiveOpportunities,
   getPositions,
   getPositionDetails,
@@ -643,7 +642,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   // Fetch actual wallet positions from getPositionDetails; poll every 60s.
   // Falls back to public opportunities (character-specific) if no positions returned.
   useEffect(() => {
-    const fn = character === "volty" ? getAggressiveOpportunities : getConservativeOpportunities;
+    const fn = getAggressiveOpportunities;
 
     const fetchRoutes = async () => {
       // ── Primary: real positions for this wallet ───────────────────────────
@@ -678,7 +677,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   // Primary: getDailyApyHistory(smartWalletAddress, "7D") → label "Current APY"
   // Fallback: getStrategyApy(strategy, asset)             → label "Est. APY"
   useEffect(() => {
-    const strategy = isVolty ? "aggressive" : "conservative";
+    const strategy = "aggressive";
     const asset    = isVolty ? "WETH" : "USDC";
 
     const fetchApy = async () => {
@@ -861,8 +860,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       if (walletAddress) {
         const provider = await getProvider();
         await ensureBase(provider);
-        const strategy = isVolty ? "aggressive" : "conservative";
-        await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider, strategy);
+        await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider, "aggressive");
         // Always add to existing deposited total — previous deposits may be in
         // ZyFAI strategies (not in the Safe) so reading safeBalance would only
         // return the latest amount, not the cumulative total.
@@ -931,7 +929,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       if (walletAddress) {
         const provider = await getProvider();
         await ensureBase(provider);
-        await depositToZyfai(amount, walletAddress, cfg.asset, provider, isVolty ? "aggressive" : "conservative");
+        await depositToZyfai(amount, walletAddress, cfg.asset, provider, "aggressive");
         setDeposited(prev => prev + amount);
       }
       if (smartWalletAddress) {
