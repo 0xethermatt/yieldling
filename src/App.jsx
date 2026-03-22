@@ -744,9 +744,9 @@ function bumpYieldlings() {
 // ── Components ───────────────────────────────────────────────────────────────
 function Stars() { return <div className="stars" />; }
 function Nav({ screen, setScreen }) {
-  const { ready, authenticated, login, logout } = usePrivy();
+  const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
-  const addr = wallets?.[0]?.address;
+  const addr = wallets?.[0]?.address ?? user?.wallet?.address;
   const shortAddr = addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : null;
   const tabs = ["landing", "adopt", "nursery"];
   const labels = ["Home", "Adopt", "Nursery"];
@@ -762,8 +762,8 @@ function Nav({ screen, setScreen }) {
         ))}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        {!ready ? null : authenticated && shortAddr ? (
-          <button className="nav-wallet addr" onClick={logout}>{shortAddr}</button>
+        {!ready ? null : authenticated ? (
+          <button className="nav-wallet addr" onClick={logout}>{shortAddr ?? "Connected"}</button>
         ) : (
           <button className="nav-wallet" onClick={login}>Connect</button>
         )}
