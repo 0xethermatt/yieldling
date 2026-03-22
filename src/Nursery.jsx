@@ -120,12 +120,16 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 .stat-card.teal::before   { background: var(--teal); }
 .stat-card.purple::before { background: var(--purple); }
 .stat-card.dim::before    { background: rgba(238,240,248,.15); }
+/* Non-wide cards: label stacked above value */
+.stat-card:not(.wide) { display: flex; flex-direction: column; justify-content: center; }
 .stat-card.wide { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; }
 .stat-lbl { font-size: 10px; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
 .stat-card.wide .stat-lbl { margin-bottom: 0; }
 .stat-val { font-family: var(--mono); font-size: 22px; font-weight: 700; }
-/* Half-width cards — shrink font so long dollar values don't clip */
-.stat-card:not(.wide) .stat-val { font-size: clamp(15px, 4.2vw, 20px); }
+/* Half-width cards: value fills full card width, no overflow */
+.stat-card:not(.wide) .stat-val { font-size: clamp(16px, 4.8vw, 22px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.stat-deposited-eth { line-height: 1.2; }
+.stat-deposited-eth .stat-usd { font-size: 11px; font-weight: 700; color: var(--dim); margin-top: 2px; font-family: var(--mono); }
 .stat-val.teal   { color: var(--teal); }
 .stat-val.purple { color: var(--purple); }
 .stat-val.white  { color: var(--text); }
@@ -1096,14 +1100,13 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         <div className="stat-cards">
           <div className="stat-card dim">
             <div className="stat-lbl">Deposited</div>
-            <div className="stat-val white">
-              {isVolty
-                ? <>
-                    {fmtEth(deposited)}
-                    {ethPrice !== null && <span style={{ fontSize: 11, color: "var(--dim)", marginLeft: 4 }}>(${fmt(deposited * ethPrice)})</span>}
-                  </>
-                : `$${fmt(deposited)}`}
-            </div>
+            {isVolty
+              ? <div className="stat-deposited-eth">
+                  <div className="stat-val white">{fmtEth(deposited)}</div>
+                  {ethPrice !== null && <div className="stat-usd">${fmt(deposited * ethPrice)}</div>}
+                </div>
+              : <div className="stat-val white">${fmt(deposited)}</div>
+            }
           </div>
           <div className="stat-card purple">
             <div className="stat-lbl">{apyLabel}</div>
