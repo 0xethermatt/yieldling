@@ -119,6 +119,7 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 }
 .stat-card.teal::before   { background: var(--teal); }
 .stat-card.purple::before { background: var(--purple); }
+.stat-card.pink::before   { background: var(--pink); }
 .stat-card.dim::before    { background: rgba(238,240,248,.15); }
 /* Non-wide cards: label stacked above value */
 .stat-card:not(.wide) { display: flex; flex-direction: column; justify-content: center; }
@@ -133,6 +134,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 .stat-val.teal   { color: var(--teal); }
 .stat-val.purple { color: var(--purple); }
 .stat-val.white  { color: var(--text); }
+@keyframes hourpulse { 0%,100% { opacity: 1; } 50% { opacity: .4; } }
+.stat-loading { animation: hourpulse 1.4s ease-in-out infinite; font-size: 20px; line-height: 1; }
 /* pet area */
 .pet-area {
   flex: 1; display: flex; flex-direction: column;
@@ -576,7 +579,7 @@ function getStage(y, stages) {
 function getNextStage(y, stages) {
   return stages.find(s => s.threshold > y) || stages[stages.length - 1];
 }
-function fmt(n) { return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmt(n) { if (n == null) return "0.00"; return Number(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
 function fmtEth(n) { return Number(n).toFixed(6) + " ETH"; }
 export default function Nursery({ walletAddress, smartWalletAddress, character = "stabby", ownedCharacters = [], onSwitchCharacter }) {
   const { wallets } = useWallets();
@@ -586,11 +589,19 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     return (await w?.getEthereumProvider?.()) ?? window.ethereum;
   }, [wallets]);
 
+  const isVolty    = character === "volty";
   const defaultName = character.charAt(0).toUpperCase() + character.slice(1);
   const petName     = localStorage.getItem(PET_NAME_KEY)?.trim() || "";
   const charName    = petName || defaultName;
-  const [yieldEarned, setYieldEarned] = useState(0);
-  const [deposited,      setDeposited]      = useState(0);
+  // Per-character yield cache — never resets to ⏳ on switch
+  const [stabbyYield, setStabbyYield] = useState(null);
+  const [voltyYield,  setVoltyYield]  = useState(null);
+  const yieldEarned = isVolty ? voltyYield : stabbyYield;
+  // Per-character deposited cache — never resets to zero on switch
+  const [stabbyDeposited, setStabbyDeposited] = useState(null);
+  const [voltyDeposited,  setVoltyDeposited]  = useState(null);
+  const deposited     = isVolty ? voltyDeposited  : stabbyDeposited;
+  const setDeposited  = isVolty ? setVoltyDeposited : setStabbyDeposited;
   const [depositLoaded,  setDepositLoaded]  = useState(false);
   const [petState, setPetState] = useState("ok");
   const [showEvo, setShowEvo] = useState(false);
@@ -620,24 +631,20 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   const [depositing, setDepositing]             = useState(false);
   const [onBase, setOnBase]                     = useState(null); // null=unknown, true, false
   const [ethPrice, setEthPrice]                 = useState(null); // USD per ETH, Volty only
-  const [displayYield, setDisplayYield]         = useState(0);   // smoothly interpolated yield
-  const yieldBaseRef    = useRef(0);     // yieldEarned at last API poll
-  const yieldBaseTime   = useRef(null);  // timestamp of last API poll
-  const rAFRef          = useRef(null);
   const petRef = useRef(null);
   const sparkleId = useRef(0);
   const xpId = useRef(0);
   const sessionKeyReady = useRef(false);
-  const isVolty   = character === "volty";
   const stages    = isVolty ? STAGES_WETH : STAGES_USDC;
-  const stage     = getStage(yieldEarned, stages);
-  const nextStage = getNextStage(yieldEarned, stages);
+  const yieldVal  = yieldEarned ?? 0;
+  const stage     = getStage(yieldVal, stages);
+  const nextStage = getNextStage(yieldVal, stages);
   const xpPct     = nextStage.threshold === stage.threshold ? 100
-    : ((yieldEarned - stage.threshold) / (nextStage.threshold - stage.threshold)) * 100;
+    : ((yieldVal - stage.threshold) / (nextStage.threshold - stage.threshold)) * 100;
   const charImg    = CHAR_IMGS[character]?.[stage.stage - 1] ?? CHAR_IMGS.stabby[0];
   const accentRgb      = character === "volty" ? "255,106,176" : "106,255,212";
   const accentHex      = character === "volty" ? "#ff6ab0" : "#6affd4";
-  const hasActiveDeposit = depositLoaded && deposited > 0;
+  const hasActiveDeposit = depositLoaded && deposited != null && deposited > 0;
   const healthPct = petState === "anxious" ? 44
                   : petState === "danger"  ? 20
                   : hasActiveDeposit       ? 100
@@ -724,16 +731,28 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     return () => clearInterval(iv);
   }, [character, smartWalletAddress]);
 
-  // Fetch deposited principal — drives health bar; poll every 60s.
-  // Primary: ZyFAI positions (funds deployed to protocols).
-  // Fallback: direct on-chain Safe balance (shows immediately after deposit,
-  //           before ZyFAI has had time to allocate to a strategy).
+  // Fetch deposited principal — per-character cache, never resets to zero on switch.
+  // Fast path: on-chain Safe balance via getSafeBalance (no auth, instant).
+  // Authoritative: ZyFAI positions once available (funds deployed to protocols).
   useEffect(() => {
     if (!walletAddress) return;
+    const asset = isVolty ? "WETH" : "USDC";
+    // Only mark loaded false if we have no cached value yet for this character
+    if (deposited == null) setDepositLoaded(false);
+
+    // ── Fast path: on-chain balance (no SIWE auth required) ────────────────
+    if (smartWalletAddress) {
+      getSafeBalance(smartWalletAddress, asset)
+        .then(bal => {
+          if (bal > 0) setDeposited(bal);
+        })
+        .catch(() => {})
+        .finally(() => setDepositLoaded(true));
+    }
+
     const fetchDeposited = async () => {
       try {
-        // Pass smartWalletAddress so getPositions queries the Safe (where DeFi positions live)
-        const posVal = await getPositions(walletAddress, 8453, smartWalletAddress || null, isVolty ? "WETH" : "USDC");
+        const posVal = await getPositions(walletAddress, 8453, smartWalletAddress || null, asset);
         if (posVal > 0) {
           setDeposited(posVal);
         }
@@ -748,48 +767,41 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     return () => clearInterval(iv);
   }, [walletAddress, smartWalletAddress, character]);
 
-  // Fetch earned yield — poll every 30s when smart wallet is available
+  // Fetch earned yield — poll every 15s when smart wallet is available.
+  // Falls back to estimated yield (deposited × apy × time) when SDK returns 0.
   useEffect(() => {
     if (!smartWalletAddress) return;
     const poll = async () => {
       try {
         const earnings = await getYieldEarned(smartWalletAddress);
-        console.log("[Nursery] getYieldEarned raw:", JSON.stringify(earnings));
-        // Pick WETH earnings for Volty, USDC earnings for Stabby — never mix
         const raw = isVolty
           ? (earnings["WETH"] ?? earnings["weth"] ?? 0)
           : (earnings["USDC"] ?? earnings["usdc"] ?? 0);
         const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
-        console.log("[Nursery] getYieldEarned parsed val:", val);
-        if (isFinite(val) && val >= 0) {
-          setYieldEarned(val);
-          // Reset interpolation baseline so the ticker starts from the real value
-          yieldBaseRef.current  = val;
-          yieldBaseTime.current = Date.now();
-          setDisplayYield(val);
+
+        if (isFinite(val) && val > 0) {
+          // SDK returned real data — use it
+          if (isVolty) setVoltyYield(val);
+          else setStabbyYield(val);
+        } else {
+          // SDK returned 0 or empty — estimate from deposited × APY × time
+          const dep = isVolty ? voltyDeposited : stabbyDeposited;
+          const apy = currentApy;
+          if (dep > 0 && apy > 0) {
+            const estimated = dep * (apy / 100) * (daysAlive / 365);
+            console.log(`[Nursery] getOnchainEarnings returned 0, using estimate: ${dep} × ${apy}% × ${daysAlive}d = ${estimated}`);
+            if (isVolty) setVoltyYield(estimated);
+            else setStabbyYield(estimated);
+          }
         }
       } catch (err) {
         console.error("[Nursery] getYieldEarned failed:", err);
       }
     };
     poll();
-    const iv = setInterval(poll, 10_000);
+    const iv = setInterval(poll, 15_000);
     return () => clearInterval(iv);
-  }, [smartWalletAddress]);
-  // Smoothly tick displayYield forward between polls using current APY + deposited
-  useEffect(() => {
-    const apy = parseFloat(currentApy);
-    if (!isFinite(apy) || apy <= 0 || deposited <= 0) return;
-    const yieldPerMs = (apy / 100) * deposited / (365 * 24 * 3600 * 1000);
-    const tick = () => {
-      if (yieldBaseTime.current === null) return;
-      const elapsed = Date.now() - yieldBaseTime.current;
-      setDisplayYield(yieldBaseRef.current + yieldPerMs * elapsed);
-      rAFRef.current = requestAnimationFrame(tick);
-    };
-    rAFRef.current = requestAnimationFrame(tick);
-    return () => { if (rAFRef.current) cancelAnimationFrame(rAFRef.current); };
-  }, [currentApy, deposited]);
+  }, [smartWalletAddress, isVolty, stabbyDeposited, voltyDeposited, currentApy, daysAlive]);
   useEffect(() => {
     if (prevStageName && prevStageName !== stage.name) {
       setShowEvo(true);
@@ -895,17 +907,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         setDeposited(prev => prev + cfg.amount);
       }
 
-      // Refresh yield counter from chain
-      if (smartWalletAddress) {
-        try {
-          const earnings = await getYieldEarned(smartWalletAddress);
-          const raw = earnings[cfg.asset] ?? earnings[cfg.asset.toLowerCase()] ?? 0;
-          const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
-          if (isFinite(val) && val >= 0) setYieldEarned(val);
-        } catch (e) {
-          console.error("[Nursery] yield refresh failed:", e);
-        }
-      }
+      // yield will update naturally on next 15s poll
 
       // Success — update needs bar, toast, floating label, sparkles
       setNeeds(n => ({ ...n, [type]: Math.min(100, n[type] + needGain[type]) }));
@@ -927,7 +929,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     spawnSparkle(175, 260, "✨");
     spawnSparkle(215, 270, "⭐");
     spawnXpFloat(195, 270, "+5 XP");
-    setYieldEarned(y => parseFloat((y + 0.02).toFixed(4)));
+    // yield updated from real SDK poll only — no client-side increment
     toast(`💜 ${charName} loves you! +5 XP`);
   };
   const handleUnwind = async () => {
@@ -960,14 +962,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         await depositToZyfai(amount, walletAddress, cfg.asset, provider, "aggressive");
         setDeposited(prev => prev + amount);
       }
-      if (smartWalletAddress) {
-        try {
-          const earnings = await getYieldEarned(smartWalletAddress);
-          const raw = earnings[cfg.asset] ?? earnings[cfg.asset.toLowerCase()] ?? 0;
-          const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
-          if (isFinite(val) && val >= 0) setYieldEarned(val);
-        } catch (e) { /* non-fatal */ }
-      }
+      // yield will update naturally on next 15s poll
       const label = cfg.asset === "WETH" ? `+${amount} ETH` : `+$${amount}`;
       toast(`💰 Deposited! ${label}`);
       spawnXpFloat(195, 300, label);
@@ -1098,28 +1093,32 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         )}
         {/* Stat Cards — [Deposited | APY] top, [Total Yield live — wide] bottom */}
         <div className="stat-cards">
-          <div className="stat-card dim">
+          <div className={`stat-card ${isVolty ? "pink" : "teal"}`}>
             <div className="stat-lbl">Deposited</div>
-            {isVolty
-              ? <div className="stat-deposited-eth">
-                  <div className="stat-val white">{fmtEth(deposited)}</div>
-                  {ethPrice !== null && <div className="stat-usd">${fmt(deposited * ethPrice)}</div>}
-                </div>
-              : <div className="stat-val white">${fmt(deposited)}</div>
+            {deposited == null
+              ? <div className="stat-loading">⏳</div>
+              : isVolty
+                ? <div className="stat-deposited-eth">
+                    <div className="stat-val white">{fmtEth(deposited)}</div>
+                    {ethPrice !== null && <div className="stat-usd">${fmt(deposited * ethPrice)}</div>}
+                  </div>
+                : <div className="stat-val white">${fmt(deposited)}</div>
             }
           </div>
           <div className="stat-card purple">
             <div className="stat-lbl">{apyLabel}</div>
             <div className="stat-val purple">
-              {currentApy !== null ? `${parseFloat(currentApy).toFixed(1)}%` : "—"}
+              {currentApy !== null ? `${parseFloat(currentApy).toFixed(1)}%` : <span className="stat-loading">⏳</span>}
             </div>
           </div>
           <div className="stat-card teal wide">
             <div className="stat-lbl">Total Yield</div>
             <div className="stat-val teal">
-              {isVolty
-                ? fmtEth(displayYield)
-                : `$${displayYield >= 1 ? displayYield.toFixed(4) : displayYield.toFixed(6)}`}
+              {yieldEarned === null
+                ? <span className="stat-loading">⏳</span>
+                : isVolty
+                  ? fmtEth(yieldEarned)
+                  : `$${yieldEarned.toFixed(6)}`}
             </div>
           </div>
         </div>
@@ -1190,7 +1189,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
           <div className="pet-name-row">
             <div className="pet-name">{charName}</div>
             <div className="pet-xp" style={{ display:"flex", alignItems:"center" }}>
-              {isVolty ? fmtEth(yieldEarned) : `$${fmt(yieldEarned)}`} / {isVolty ? `${nextStage.threshold} ETH` : `$${nextStage.threshold}`} XP
+              {isVolty ? fmtEth(yieldVal) : `$${fmt(yieldVal)}`} / {isVolty ? `${nextStage.threshold} ETH` : `$${nextStage.threshold}`} XP
               <button className="info-btn" onClick={() => setTooltip(TIP_XP)}>ⓘ</button>
             </div>
           </div>
