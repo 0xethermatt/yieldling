@@ -496,11 +496,17 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 const styleEl = document.createElement("style");
 styleEl.textContent = css;
 document.head.appendChild(styleEl);
-const STAGES = [
+const STAGES_USDC = [
   { threshold: 0,  stage: 1, name: "Newborn",  level: "LV. 1" },
   { threshold: 1,  stage: 2, name: "Hatchling", level: "LV. 2" },
   { threshold: 10, stage: 3, name: "Elder",     level: "LV. 3" },
   { threshold: 50, stage: 4, name: "Legend",    level: "LV. 4" },
+];
+const STAGES_WETH = [
+  { threshold: 0,      stage: 1, name: "Newborn",  level: "LV. 1" },
+  { threshold: 0.0005, stage: 2, name: "Hatchling", level: "LV. 2" },
+  { threshold: 0.005,  stage: 3, name: "Elder",     level: "LV. 3" },
+  { threshold: 0.02,   stage: 4, name: "Legend",    level: "LV. 4" },
 ];
 // ── Tooltip content ───────────────────────────────────────────────────────────
 const TIP_EVO    = `Your Yieldling evolves as yield accumulates. Each stage unlocks a new form:\n\n🥚  $0 — Egg (just hatched)\n🐾  $1 — Hatchling\n🐲  $10 — Drake\n🐉  $50 — Legend\n\nKeep earning to evolve!`;
@@ -557,15 +563,16 @@ const TAP_CFG = {
 const DEPOSIT_MIN = { USDC: 1.50, WETH: 0.001 };
 const DEPOSIT_HINT = { USDC: "Minimum $1.50 USDC", WETH: "Minimum 0.001 WETH" };
 
-function getStage(y) {
-  let s = STAGES[0];
-  for (const st of STAGES) { if (y >= st.threshold) s = st; }
+function getStage(y, stages) {
+  let s = stages[0];
+  for (const st of stages) { if (y >= st.threshold) s = st; }
   return s;
 }
-function getNextStage(y) {
-  return STAGES.find(s => s.threshold > y) || STAGES[STAGES.length - 1];
+function getNextStage(y, stages) {
+  return stages.find(s => s.threshold > y) || stages[stages.length - 1];
 }
 function fmt(n) { return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+function fmtEth(n) { return Number(n).toFixed(6) + " ETH"; }
 export default function Nursery({ walletAddress, smartWalletAddress, character = "stabby", ownedCharacters = [], onSwitchCharacter }) {
   const { wallets } = useWallets();
   // Returns the EIP-1193 provider for the active wallet (Privy or injected)
@@ -607,12 +614,15 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   const [customAmount, setCustomAmount]         = useState("");
   const [depositing, setDepositing]             = useState(false);
   const [onBase, setOnBase]                     = useState(null); // null=unknown, true, false
+  const [ethPrice, setEthPrice]                 = useState(null); // USD per ETH, Volty only
   const petRef = useRef(null);
   const sparkleId = useRef(0);
   const xpId = useRef(0);
   const sessionKeyReady = useRef(false);
-  const stage     = getStage(yieldEarned);
-  const nextStage = getNextStage(yieldEarned);
+  const isVolty   = character === "volty";
+  const stages    = isVolty ? STAGES_WETH : STAGES_USDC;
+  const stage     = getStage(yieldEarned, stages);
+  const nextStage = getNextStage(yieldEarned, stages);
   const xpPct     = nextStage.threshold === stage.threshold ? 100
     : ((yieldEarned - stage.threshold) / (nextStage.threshold - stage.threshold)) * 100;
   const charImg    = CHAR_IMGS[character]?.[stage.stage - 1] ?? CHAR_IMGS.stabby[0];
@@ -773,6 +783,14 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     checkChain();
     return () => cleanup();
   }, [walletAddress]);
+  // Fetch ETH price for Volty USD equivalent display
+  useEffect(() => {
+    if (!isVolty) return;
+    fetch("https://api.coingecko.com/api/v3/simple/price?ids=ethereum&vs_currencies=usd")
+      .then(r => r.json())
+      .then(j => setEthPrice(j?.ethereum?.usd ?? null))
+      .catch(() => {});
+  }, [isVolty]);
   // Deplete needs every 30s using per-bar depletion rates (respects MIN_BAR floor)
   useEffect(() => {
     const TICK_MS = 30_000;
@@ -1070,7 +1088,9 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         <div className="stat-cards">
           <div className="stat-card teal">
             <div className="stat-lbl">Total Yield</div>
-            <div className="stat-val teal">${fmt(yieldEarned)}</div>
+            <div className="stat-val teal">
+              {isVolty ? fmtEth(yieldEarned) : `$${fmt(yieldEarned)}`}
+            </div>
           </div>
           <div className="stat-card purple">
             <div className="stat-lbl">{apyLabel}</div>
@@ -1080,7 +1100,14 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
           </div>
           <div className="stat-card dim wide">
             <div className="stat-lbl">Deposited</div>
-            <div className="stat-val white">${fmt(deposited)}</div>
+            <div className="stat-val white">
+              {isVolty
+                ? <>
+                    {fmtEth(deposited)}
+                    {ethPrice !== null && <span style={{ fontSize: 12, color: "var(--dim)", marginLeft: 6 }}>(${fmt(deposited * ethPrice)})</span>}
+                  </>
+                : `$${fmt(deposited)}`}
+            </div>
           </div>
         </div>
         {/* Pet */}
@@ -1150,7 +1177,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
           <div className="pet-name-row">
             <div className="pet-name">{charName}</div>
             <div className="pet-xp" style={{ display:"flex", alignItems:"center" }}>
-              {fmt(yieldEarned)} / {nextStage.threshold} XP
+              {isVolty ? fmtEth(yieldEarned) : `$${fmt(yieldEarned)}`} / {isVolty ? `${nextStage.threshold} ETH` : `$${nextStage.threshold}`} XP
               <button className="info-btn" onClick={() => setTooltip(TIP_XP)}>ⓘ</button>
             </div>
           </div>
@@ -1282,7 +1309,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
             <img className="evo-pet" src={charImg} alt={charName}
               style={{ width: 120, height: 120, objectFit: "contain" }} />
             <div className="evo-title">EVOLVED!</div>
-            <div className="evo-sub">{charName} became a <strong>{stage.name}</strong>! 🎉<br />Your Yieldling hit the ${stage.threshold} yield milestone.</div>
+            <div className="evo-sub">{charName} became a <strong>{stage.name}</strong>! 🎉<br />Your Yieldling hit the {isVolty ? `${stage.threshold} ETH` : `$${stage.threshold}`} yield milestone.</div>
             <button className="evo-close" onClick={() => setShowEvo(false)}>Keep Growing →</button>
           </div>
         )}

@@ -160,69 +160,79 @@ export async function depositToZyfai(amount, walletAddress, asset = "USDC", prov
     throw e;
   }
 
-  // Step 4.5 — for WETH deposits, check ETH balance then wrap native ETH → WETH
+  // Step 4.5 — for WETH deposits: use existing WETH if sufficient, otherwise wrap ETH
   if (asset === "WETH") {
-    console.log(`[ZyFAI] Step 4.5: checking ETH balance before wrap...`);
     const client = createPublicClient({ chain: base, transport: http() });
-
-    // 4.5a — check native ETH balance
-    let ethBalanceWei;
-    try {
-      ethBalanceWei = await client.getBalance({ address: walletAddress });
-    } catch (e) {
-      console.error("[ZyFAI] Step 4.5a ✗ getBalance failed:", e?.message);
-      throw new Error("Could not read ETH balance. Check your connection and try again.");
-    }
-    const amountWei = parseEther(amount.toString());
-    // Require deposit amount + ~0.0005 ETH buffer for gas
-    const gasBudgetWei = parseEther("0.0005");
-    console.log(`[ZyFAI] Step 4.5a: ETH balance ${Number(ethBalanceWei) / 1e18} ETH, need ${amount} ETH + gas`);
-    if (ethBalanceWei < amountWei + gasBudgetWei) {
-      const have = (Number(ethBalanceWei) / 1e18).toFixed(6);
-      const need = (Number(amountWei + gasBudgetWei) / 1e18).toFixed(6);
-      console.error(`[ZyFAI] Step 4.5a ✗ Insufficient ETH: have ${have}, need ${need}`);
-      throw new Error(`Insufficient ETH balance. You have ${have} ETH on Base but need at least ${need} ETH (deposit + gas).`);
-    }
-
-    // 4.5b — wrap ETH → WETH
-    console.log(`[ZyFAI] Step 4.5b: wrapping ${amount} ETH → WETH on Base...`);
-    try {
-      await wrapEthToWeth(amount, provider, walletAddress);
-      console.log("[ZyFAI] Step 4.5b ✓ ETH wrapped to WETH");
-    } catch (e) {
-      console.error("[ZyFAI] Step 4.5b ✗ ETH wrap failed:", e?.message, e?.code);
-      // Translate common provider errors into readable messages
-      if (e?.code === 4001 || e?.message?.includes("rejected") || e?.message?.includes("denied")) {
-        throw new Error("Transaction rejected. Please approve the ETH → WETH wrap in your wallet.");
-      }
-      if (e?.message?.includes("insufficient funds")) {
-        throw new Error("Insufficient ETH to cover the wrap transaction and gas fees.");
-      }
-      throw new Error(`ETH wrap failed: ${e?.message ?? "unknown error"}`);
-    }
-
-    // 4.5c — verify WETH balance landed; wait 3s first then retry up to 3× at 2s intervals
     const WETH_ABI = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }];
-    console.log("[ZyFAI] Step 4.5c: waiting 3s for WETH balance to settle...");
-    await new Promise(resolve => setTimeout(resolve, 3000));
-    let wethConfirmed = false;
-    for (let attempt = 1; attempt <= 3; attempt++) {
-      try {
-        const wethBalance = await client.readContract({ address: WETH_ADDRESS, abi: WETH_ABI, functionName: "balanceOf", args: [walletAddress] });
-        console.log(`[ZyFAI] Step 4.5c attempt ${attempt}: WETH balance = ${Number(wethBalance) / 1e18} WETH`);
-        if (wethBalance >= amountWei) {
-          console.log("[ZyFAI] Step 4.5c ✓ WETH balance confirmed");
-          wethConfirmed = true;
-          break;
-        }
-        console.warn(`[ZyFAI] Step 4.5c attempt ${attempt}: balance ${Number(wethBalance) / 1e18} < needed ${amount} — retrying...`);
-      } catch (e) {
-        console.warn(`[ZyFAI] Step 4.5c attempt ${attempt} readContract error (non-fatal):`, e?.message);
-      }
-      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 2000));
+    const amountWei = parseEther(amount.toString());
+
+    // 4.5a — check existing WETH balance; skip wrap if already sufficient
+    let existingWeth = 0n;
+    try {
+      existingWeth = await client.readContract({ address: WETH_ADDRESS, abi: WETH_ABI, functionName: "balanceOf", args: [walletAddress] });
+      console.log(`[ZyFAI] Step 4.5a: existing WETH = ${Number(existingWeth) / 1e18} WETH, need ${amount} WETH`);
+    } catch (e) {
+      console.warn("[ZyFAI] Step 4.5a: could not read WETH balance — will wrap:", e?.message);
     }
-    if (!wethConfirmed) {
-      console.warn("[ZyFAI] Step 4.5c ⚠ WETH balance not confirmed after retries — proceeding anyway");
+
+    if (existingWeth >= amountWei) {
+      console.log("[ZyFAI] Step 4.5: sufficient WETH already in wallet — skipping ETH wrap");
+    } else {
+      // 4.5b — check native ETH balance before wrapping
+      let ethBalanceWei;
+      try {
+        ethBalanceWei = await client.getBalance({ address: walletAddress });
+      } catch (e) {
+        console.error("[ZyFAI] Step 4.5b ✗ getBalance failed:", e?.message);
+        throw new Error("Could not read ETH balance. Check your connection and try again.");
+      }
+      const gasBudgetWei = parseEther("0.0005");
+      console.log(`[ZyFAI] Step 4.5b: ETH balance ${Number(ethBalanceWei) / 1e18} ETH, need ${amount} ETH + gas`);
+      if (ethBalanceWei < amountWei + gasBudgetWei) {
+        const have = (Number(ethBalanceWei) / 1e18).toFixed(6);
+        const need = (Number(amountWei + gasBudgetWei) / 1e18).toFixed(6);
+        console.error(`[ZyFAI] Step 4.5b ✗ Insufficient ETH: have ${have}, need ${need}`);
+        throw new Error(`Insufficient ETH balance. You have ${have} ETH on Base but need at least ${need} ETH (wrap + gas).`);
+      }
+
+      // 4.5c — wrap full deposit amount
+      console.log(`[ZyFAI] Step 4.5c: wrapping ${amount} ETH → WETH...`);
+      try {
+        await wrapEthToWeth(amount, provider, walletAddress);
+        console.log("[ZyFAI] Step 4.5c ✓ ETH wrapped to WETH");
+      } catch (e) {
+        console.error("[ZyFAI] Step 4.5c ✗ ETH wrap failed:", e?.message, e?.code);
+        if (e?.code === 4001 || e?.message?.includes("rejected") || e?.message?.includes("denied")) {
+          throw new Error("Transaction rejected. Please approve the ETH → WETH wrap in your wallet.");
+        }
+        if (e?.message?.includes("insufficient funds")) {
+          throw new Error("Insufficient ETH to cover the wrap transaction and gas fees.");
+        }
+        throw new Error(`ETH wrap failed: ${e?.message ?? "unknown error"}`);
+      }
+
+      // 4.5d — verify WETH balance settled; wait 3s then retry up to 3× at 2s intervals
+      console.log("[ZyFAI] Step 4.5d: waiting 3s for WETH balance to settle...");
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      let wethConfirmed = false;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const wethBalance = await client.readContract({ address: WETH_ADDRESS, abi: WETH_ABI, functionName: "balanceOf", args: [walletAddress] });
+          console.log(`[ZyFAI] Step 4.5d attempt ${attempt}: WETH balance = ${Number(wethBalance) / 1e18} WETH`);
+          if (wethBalance >= amountWei) {
+            console.log("[ZyFAI] Step 4.5d ✓ WETH balance confirmed");
+            wethConfirmed = true;
+            break;
+          }
+          console.warn(`[ZyFAI] Step 4.5d attempt ${attempt}: balance ${Number(wethBalance) / 1e18} < needed ${amount} — retrying...`);
+        } catch (e) {
+          console.warn(`[ZyFAI] Step 4.5d attempt ${attempt} readContract error (non-fatal):`, e?.message);
+        }
+        if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 2000));
+      }
+      if (!wethConfirmed) {
+        console.warn("[ZyFAI] Step 4.5d ⚠ WETH balance not confirmed after retries — proceeding anyway");
+      }
     }
   }
 
