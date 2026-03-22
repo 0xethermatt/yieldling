@@ -746,7 +746,15 @@ function Stars() { return <div className="stars" />; }
 function Nav({ screen, setScreen }) {
   const { ready, authenticated, login, logout, user } = usePrivy();
   const { wallets } = useWallets();
-  const addr = wallets?.[0]?.address ?? user?.wallet?.address;
+  // Immediate localStorage fallback — available before Privy finishes initialising
+  const lsAddr = (() => {
+    for (const c of ["stabby", "volty"]) {
+      const a = localStorage.getItem(`yieldling_${c}_wallet`);
+      if (a) return a;
+    }
+    return null;
+  })();
+  const addr = wallets?.[0]?.address ?? user?.wallet?.address ?? (authenticated ? lsAddr : null);
   const shortAddr = addr ? `${addr.slice(0, 6)}…${addr.slice(-4)}` : null;
   const tabs = ["landing", "adopt", "nursery"];
   const labels = ["Home", "Adopt", "Nursery"];
@@ -762,7 +770,11 @@ function Nav({ screen, setScreen }) {
         ))}
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-        {!ready ? null : authenticated ? (
+        {!ready ? (
+          lsAddr
+            ? <button className="nav-wallet addr" style={{ opacity: 0.7 }}>{`${lsAddr.slice(0, 6)}…${lsAddr.slice(-4)}`}</button>
+            : null
+        ) : authenticated ? (
           <button className="nav-wallet addr" onClick={logout}>{shortAddr ?? "Connected"}</button>
         ) : (
           <button className="nav-wallet" onClick={login}>Connect</button>
