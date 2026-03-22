@@ -649,7 +649,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       // ── Primary: real positions for this wallet ───────────────────────────
       if (walletAddress) {
         try {
-          const details = await getPositionDetails(walletAddress, 8453, smartWalletAddress || null);
+          const details = await getPositionDetails(walletAddress, 8453, smartWalletAddress || null, isVolty ? "WETH" : "USDC");
           if (details.length > 0) {
             setPositions(details);
             setPositionsLoaded(true);
@@ -678,8 +678,8 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   // Primary: getDailyApyHistory(smartWalletAddress, "7D") → label "Current APY"
   // Fallback: getStrategyApy(strategy, asset)             → label "Est. APY"
   useEffect(() => {
-    const strategy = "aggressive"; // all characters use aggressive strategy
-    const asset    = character === "volty" ? "WETH" : "USDC";
+    const strategy = isVolty ? "aggressive" : "conservative";
+    const asset    = isVolty ? "WETH" : "USDC";
 
     const fetchApy = async () => {
       // ── Primary: smart wallet's own 7-day APY history ────────────────────
@@ -724,7 +724,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
     const fetchDeposited = async () => {
       try {
         // Pass smartWalletAddress so getPositions queries the Safe (where DeFi positions live)
-        const posVal = await getPositions(walletAddress, 8453, smartWalletAddress || null);
+        const posVal = await getPositions(walletAddress, 8453, smartWalletAddress || null, isVolty ? "WETH" : "USDC");
         if (posVal > 0) {
           setDeposited(posVal);
         }
@@ -746,7 +746,10 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       try {
         const earnings = await getYieldEarned(smartWalletAddress);
         console.log("[Nursery] getYieldEarned raw:", JSON.stringify(earnings));
-        const raw = earnings["USDC"] ?? earnings["usdc"] ?? earnings["WETH"] ?? earnings["weth"] ?? 0;
+        // Pick WETH earnings for Volty, USDC earnings for Stabby — never mix
+        const raw = isVolty
+          ? (earnings["WETH"] ?? earnings["weth"] ?? 0)
+          : (earnings["USDC"] ?? earnings["usdc"] ?? 0);
         const val = typeof raw === "number" ? raw : parseFloat(raw) || 0;
         console.log("[Nursery] getYieldEarned parsed val:", val);
         if (isFinite(val) && val >= 0) {
@@ -858,7 +861,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       if (walletAddress) {
         const provider = await getProvider();
         await ensureBase(provider);
-        const strategy = "aggressive";
+        const strategy = isVolty ? "aggressive" : "conservative";
         await depositToZyfai(cfg.amount, walletAddress, cfg.asset, provider, strategy);
         // Always add to existing deposited total — previous deposits may be in
         // ZyFAI strategies (not in the Safe) so reading safeBalance would only
@@ -928,7 +931,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
       if (walletAddress) {
         const provider = await getProvider();
         await ensureBase(provider);
-        await depositToZyfai(amount, walletAddress, cfg.asset, provider, "aggressive");
+        await depositToZyfai(amount, walletAddress, cfg.asset, provider, isVolty ? "aggressive" : "conservative");
         setDeposited(prev => prev + amount);
       }
       if (smartWalletAddress) {

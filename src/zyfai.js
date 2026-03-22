@@ -355,7 +355,8 @@ function parseTokenAmount(raw, tokenSymbol) {
  * @param {string} [safeAddress=null]
  * @returns {Array<{ protocol: string, token: string, apy: string, value: number }>}
  */
-export async function getPositionDetails(walletAddress, chainId = 8453, safeAddress = null) {
+export async function getPositionDetails(walletAddress, chainId = 8453, safeAddress = null, asset = null) {
+  const assetUpper = asset?.toUpperCase() ?? null;
   const sdk = createSdk();
 
   // ── Primary: sdk.getPositions() ──────────────────────────────────────────
@@ -363,20 +364,21 @@ export async function getPositionDetails(walletAddress, chainId = 8453, safeAddr
     const raw = await sdk.getPositions(walletAddress, chainId);
     console.log("[ZyFAI] getPositionDetails sdk.getPositions RAW:", JSON.stringify(raw, null, 2));
 
-    const positions = raw?.portfolio?.positions ?? [];
+    const allPositions = raw?.portfolio?.positions ?? [];
+    const positions = assetUpper
+      ? allPositions.filter(p => p.token_symbol?.toUpperCase() === assetUpper)
+      : allPositions.filter(p => p.protocol_name || p.pool);
     if (positions.length > 0) {
-      return positions
-        .filter(p => p.protocol_name || p.pool)
-        .map(p => {
-          const sym    = p.token_symbol ?? "USDC";
-          const apyN   = parseFloat(p.pool_apy ?? 0);
-          return {
-            protocol: `${p.protocol_name ?? "Unknown"}${p.pool ? ` · ${p.pool}` : ""}`,
-            token:    sym,
-            apy:      isFinite(apyN) ? apyN.toFixed(2) : "—",
-            value:    parseTokenAmount(p.underlyingAmount, sym),
-          };
-        });
+      return positions.map(p => {
+        const sym    = p.token_symbol ?? "USDC";
+        const apyN   = parseFloat(p.pool_apy ?? 0);
+        return {
+          protocol: `${p.protocol_name ?? "Unknown"}${p.pool ? ` · ${p.pool}` : ""}`,
+          token:    sym,
+          apy:      isFinite(apyN) ? apyN.toFixed(2) : "—",
+          value:    parseTokenAmount(p.underlyingAmount, sym),
+        };
+      });
     }
     console.log("[ZyFAI] getPositionDetails: portfolio.positions empty (no auth?) — falling back to history");
   } catch (e) {
@@ -391,7 +393,8 @@ export async function getPositionDetails(walletAddress, chainId = 8453, safeAddr
     if (!historyObj || typeof historyObj !== "object") return [];
     const dates      = Object.keys(historyObj).sort().reverse();
     const latestDay  = historyObj[dates[0]] ?? {};
-    const positions  = latestDay?.positions ?? [];
+    const allPos     = latestDay?.positions ?? [];
+    const positions  = assetUpper ? allPos.filter(p => p.tokenSymbol?.toUpperCase() === assetUpper) : allPos;
     const finalApy   = latestDay?.final_weighted_apy ?? {};
     return positions.map(pos => {
       const sym  = pos.tokenSymbol ?? "USDC";
@@ -410,7 +413,7 @@ export async function getPositionDetails(walletAddress, chainId = 8453, safeAddr
 }
 
 /**
- * Fetch total deposited value for a wallet.
+ * Fetch total deposited value for a wallet, filtered by asset.
  *
  * Primary: sdk.getPositions() — sums portfolio.positions[].underlyingAmount
  *   PLUS portfolio.staleBalances[].balance (idle funds in Safe awaiting deployment).
@@ -422,36 +425,33 @@ export async function getPositionDetails(walletAddress, chainId = 8453, safeAddr
  * @param {string} walletAddress
  * @param {number} [chainId=8453]
  * @param {string} [safeAddress=null]
- * @returns {number} Total USD value, or 0 on failure
+ * @param {"USDC"|"WETH"|null} [asset=null] - Filter by asset; null = sum all
+ * @returns {number} Total token-native value (USD for USDC, ETH for WETH), or 0
  */
-export async function getPositions(walletAddress, chainId = 8453, safeAddress = null) {
-  console.log(`[ZyFAI] getPositions — wallet: ${walletAddress}, safe: ${safeAddress}`);
+export async function getPositions(walletAddress, chainId = 8453, safeAddress = null, asset = null) {
+  const assetUpper = asset?.toUpperCase() ?? null;
+  console.log(`[ZyFAI] getPositions — wallet: ${walletAddress}, safe: ${safeAddress}, asset: ${assetUpper}`);
   const sdk = createSdk();
 
   // ── Primary: sdk.getPositions() — real-time when authenticated ───────────
-  // Sums underlyingAmount (deployed to protocols) + staleBalances (idle in Safe)
   try {
     const raw = await sdk.getPositions(walletAddress, chainId);
     console.log("[ZyFAI] getPositions sdk.getPositions RAW:", JSON.stringify(raw, null, 2));
 
     const portfolio     = raw?.portfolio ?? {};
-    const positions     = portfolio.positions    ?? [];
-    const staleBalances = portfolio.staleBalances ?? [];
+    const allPositions  = portfolio.positions    ?? [];
+    const allStale      = portfolio.staleBalances ?? [];
+
+    // Filter by asset if specified
+    const positions     = assetUpper ? allPositions.filter(p => p.token_symbol?.toUpperCase() === assetUpper) : allPositions;
+    const staleBalances = assetUpper ? allStale.filter(b => b.tokenSymbol?.toUpperCase() === assetUpper) : allStale;
 
     const hasData = positions.length > 0 || staleBalances.length > 0;
     if (hasData) {
-      // Sum deployed positions (underlyingAmount = base units)
-      const deployedTotal = positions.reduce((s, p) => {
-        return s + parseTokenAmount(p.underlyingAmount, p.token_symbol);
-      }, 0);
-
-      // Sum idle balances (balance = base units, isPending = not yet deployed)
-      const staleTotal = staleBalances.reduce((s, b) => {
-        return s + parseTokenAmount(b.balance, b.tokenSymbol);
-      }, 0);
-
+      const deployedTotal = positions.reduce((s, p) => s + parseTokenAmount(p.underlyingAmount, p.token_symbol), 0);
+      const staleTotal    = staleBalances.reduce((s, b) => s + parseTokenAmount(b.balance, b.tokenSymbol), 0);
       const total = deployedTotal + staleTotal;
-      console.log(`[ZyFAI] getPositions real-time — deployed: $${deployedTotal.toFixed(4)}, stale: $${staleTotal.toFixed(4)}, total: $${total.toFixed(4)}`);
+      console.log(`[ZyFAI] getPositions real-time (${assetUpper}) — deployed: ${deployedTotal.toFixed(6)}, stale: ${staleTotal.toFixed(6)}, total: ${total.toFixed(6)}`);
       return total;
     }
     console.log("[ZyFAI] getPositions: portfolio empty (no SIWE auth) — falling back");
@@ -468,22 +468,26 @@ export async function getPositions(walletAddress, chainId = 8453, safeAddress = 
     if (historyObj && typeof historyObj === "object") {
       const dates     = Object.keys(historyObj).sort().reverse();
       const latestDay = historyObj[dates[0]] ?? {};
-      deployedTotal   = (latestDay.positions ?? []).reduce((s, pos) => {
+      const filtered  = assetUpper
+        ? (latestDay.positions ?? []).filter(p => p.tokenSymbol?.toUpperCase() === assetUpper)
+        : (latestDay.positions ?? []);
+      deployedTotal = filtered.reduce((s, pos) => {
         const bal = pos.balance;
         return s + (typeof bal === "number" && isFinite(bal) ? bal : 0);
       }, 0);
-      console.log(`[ZyFAI] getPositions history fallback (${dates[0]}): $${deployedTotal.toFixed(4)}`);
+      console.log(`[ZyFAI] getPositions history fallback (${dates[0]}, ${assetUpper}): ${deployedTotal.toFixed(6)}`);
     }
   } catch (e) {
     console.warn("[ZyFAI] getPositions getDailyApyHistory fallback failed:", e.message);
   }
 
-  // Always add real-time Safe on-chain USDC (staleBalances equivalent)
+  // Add real-time on-chain Safe balance for the asset
   if (safeAddress) {
     try {
-      const usdcBal = await getSafeBalance(safeAddress, "USDC");
-      console.log(`[ZyFAI] getPositions safe USDC (on-chain): $${usdcBal.toFixed(4)}, snapshot: $${deployedTotal.toFixed(4)}`);
-      return deployedTotal + usdcBal;
+      const onChainAsset = assetUpper ?? "USDC";
+      const safeBal = await getSafeBalance(safeAddress, onChainAsset);
+      console.log(`[ZyFAI] getPositions safe ${onChainAsset} (on-chain): ${safeBal.toFixed(6)}, snapshot: ${deployedTotal.toFixed(6)}`);
+      return deployedTotal + safeBal;
     } catch (e) {
       console.warn("[ZyFAI] getPositions getSafeBalance failed:", e.message);
     }
