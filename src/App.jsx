@@ -1340,7 +1340,8 @@ export default function App() {
     setTimeout(() => setAppToast(null), 3200);
   };
 
-  // Guarded navigation — blocks Nursery access for non-adopted wallets
+  // Guarded navigation — blocks Nursery access for non-adopted wallets;
+  // blocks Adopt when both characters already owned.
   const setScreen = (target) => {
     if (target === "nursery") {
       const hasAny = walletAddress && (
@@ -1353,6 +1354,16 @@ export default function App() {
       if (!hasAny) {
         showAppToast("🥚 Adopt a Yieldling first to access the Nursery");
         setScreenRaw("adopt");
+        return;
+      }
+    }
+    if (target === "adopt" && walletAddress) {
+      const bothAdopted = ["stabby", "volty"].every(c =>
+        localStorage.getItem(`yieldling_${c}_adopted`) === "true" &&
+        localStorage.getItem(`yieldling_${c}_wallet`) === walletAddress
+      );
+      if (bothAdopted) {
+        showAppToast("🐣 You already have a Stabby and a Volty! Head to the Nursery to care for them.");
         return;
       }
     }
