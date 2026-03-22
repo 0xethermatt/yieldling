@@ -201,19 +201,28 @@ export async function depositToZyfai(amount, walletAddress, asset = "USDC", prov
       throw new Error(`ETH wrap failed: ${e?.message ?? "unknown error"}`);
     }
 
-    // 4.5c — verify WETH balance landed (gives clearer error than depositFunds failing silently)
-    try {
-      const WETH_ABI = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }];
-      const wethBalance = await client.readContract({ address: WETH_ADDRESS, abi: WETH_ABI, functionName: "balanceOf", args: [walletAddress] });
-      console.log(`[ZyFAI] Step 4.5c: WETH balance after wrap: ${Number(wethBalance) / 1e18} WETH`);
-      if (wethBalance < amountWei) {
-        throw new Error(`WETH balance (${Number(wethBalance) / 1e18}) is less than deposit amount (${amount}). Wrap may not have settled yet — please retry.`);
+    // 4.5c — verify WETH balance landed; wait 3s first then retry up to 3× at 2s intervals
+    const WETH_ABI = [{ name: "balanceOf", type: "function", stateMutability: "view", inputs: [{ name: "account", type: "address" }], outputs: [{ type: "uint256" }] }];
+    console.log("[ZyFAI] Step 4.5c: waiting 3s for WETH balance to settle...");
+    await new Promise(resolve => setTimeout(resolve, 3000));
+    let wethConfirmed = false;
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      try {
+        const wethBalance = await client.readContract({ address: WETH_ADDRESS, abi: WETH_ABI, functionName: "balanceOf", args: [walletAddress] });
+        console.log(`[ZyFAI] Step 4.5c attempt ${attempt}: WETH balance = ${Number(wethBalance) / 1e18} WETH`);
+        if (wethBalance >= amountWei) {
+          console.log("[ZyFAI] Step 4.5c ✓ WETH balance confirmed");
+          wethConfirmed = true;
+          break;
+        }
+        console.warn(`[ZyFAI] Step 4.5c attempt ${attempt}: balance ${Number(wethBalance) / 1e18} < needed ${amount} — retrying...`);
+      } catch (e) {
+        console.warn(`[ZyFAI] Step 4.5c attempt ${attempt} readContract error (non-fatal):`, e?.message);
       }
-      console.log("[ZyFAI] Step 4.5c ✓ WETH balance confirmed");
-    } catch (e) {
-      if (e.message.startsWith("WETH balance")) throw e;
-      // Non-fatal — log and continue; depositFunds will fail with its own error if WETH isn't there
-      console.warn("[ZyFAI] Step 4.5c ⚠ WETH balance check failed (non-fatal):", e?.message);
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, 2000));
+    }
+    if (!wethConfirmed) {
+      console.warn("[ZyFAI] Step 4.5c ⚠ WETH balance not confirmed after retries — proceeding anyway");
     }
   }
 
