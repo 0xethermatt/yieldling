@@ -124,6 +124,8 @@ body { background: var(--bg); color: var(--text); font-family: var(--font); marg
 .stat-lbl { font-size: 10px; font-weight: 800; color: var(--dim); text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 6px; }
 .stat-card.wide .stat-lbl { margin-bottom: 0; }
 .stat-val { font-family: var(--mono); font-size: 22px; font-weight: 700; }
+/* Half-width cards — shrink font so long dollar values don't clip */
+.stat-card:not(.wide) .stat-val { font-size: clamp(15px, 4.2vw, 20px); }
 .stat-val.teal   { color: var(--teal); }
 .stat-val.purple { color: var(--purple); }
 .stat-val.white  { color: var(--text); }
@@ -1090,7 +1092,7 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
             })}
           </div>
         )}
-        {/* Stat Cards — Deposited | Yield | APY (wide) */}
+        {/* Stat Cards — [Deposited | APY] top, [Total Yield live — wide] bottom */}
         <div className="stat-cards">
           <div className="stat-card dim">
             <div className="stat-lbl">Deposited</div>
@@ -1098,21 +1100,23 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
               {isVolty
                 ? <>
                     {fmtEth(deposited)}
-                    {ethPrice !== null && <span style={{ fontSize: 12, color: "var(--dim)", marginLeft: 6 }}>(${fmt(deposited * ethPrice)})</span>}
+                    {ethPrice !== null && <span style={{ fontSize: 11, color: "var(--dim)", marginLeft: 4 }}>(${fmt(deposited * ethPrice)})</span>}
                   </>
                 : `$${fmt(deposited)}`}
             </div>
           </div>
-          <div className="stat-card teal">
-            <div className="stat-lbl">Total Yield</div>
-            <div className="stat-val teal">
-              {isVolty ? fmtEth(displayYield) : `$${fmt(displayYield)}`}
-            </div>
-          </div>
-          <div className="stat-card purple wide">
+          <div className="stat-card purple">
             <div className="stat-lbl">{apyLabel}</div>
             <div className="stat-val purple">
               {currentApy !== null ? `${parseFloat(currentApy).toFixed(1)}%` : "—"}
+            </div>
+          </div>
+          <div className="stat-card teal wide">
+            <div className="stat-lbl">Total Yield</div>
+            <div className="stat-val teal">
+              {isVolty
+                ? fmtEth(displayYield)
+                : `$${displayYield >= 1 ? displayYield.toFixed(4) : displayYield.toFixed(6)}`}
             </div>
           </div>
         </div>
