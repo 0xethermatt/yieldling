@@ -1311,9 +1311,12 @@ export default function App() {
   const walletAddress = wallets?.[0]?.address ?? null;
 
   const [screen,             setScreenRaw]          = useState("landing");
-  const [smartWalletAddress, setSmartWalletAddress] = useState(
-    () => localStorage.getItem("yieldling_smart_wallet") ?? null
-  );
+  const [smartWalletAddress, setSmartWalletAddress] = useState(() => {
+    const savedChar = localStorage.getItem("yieldling_character") ?? "stabby";
+    return localStorage.getItem(`yieldling_${savedChar}_smart_wallet`)
+        ?? localStorage.getItem("yieldling_smart_wallet")
+        ?? null;
+  });
   const [character, setCharacter] = useState(
     () => localStorage.getItem("yieldling_character") ?? "stabby"
   );
@@ -1354,9 +1357,11 @@ export default function App() {
       localStorage.getItem(`yieldling_${c}_wallet`) === walletAddress
     );
     if (legacyOk || perCharOk) {
-      const savedChar        = localStorage.getItem("yieldling_character");
-      const savedSmartWallet = localStorage.getItem("yieldling_smart_wallet");
-      if (savedChar)        setCharacter(savedChar);
+      const savedChar = localStorage.getItem("yieldling_character") ?? "stabby";
+      setCharacter(savedChar);
+      // Always use per-character smart wallet key — legacy key gets overwritten on each adoption
+      const savedSmartWallet = localStorage.getItem(`yieldling_${savedChar}_smart_wallet`)
+                            ?? localStorage.getItem("yieldling_smart_wallet");
       if (savedSmartWallet) setSmartWalletAddress(savedSmartWallet);
       setScreenRaw("nursery");
     }
