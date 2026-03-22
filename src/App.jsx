@@ -203,7 +203,9 @@ const css = `
   }
   .hero-stat .val.loading {
     opacity: .35;
+    animation: statpulse 1.2s ease-in-out infinite;
   }
+  @keyframes statpulse { 0%,100%{opacity:.15} 50%{opacity:.45} }
   .hero-stat .lbl {
     font-size: 11px; color: var(--dim); font-weight: 700;
     text-transform: uppercase; letter-spacing: 1px; margin-top: 4px;
@@ -783,60 +785,55 @@ function Nav({ screen, setScreen }) {
   );
 }
 // ── Landing ──────────────────────────────────────────────────────────────────
+// Race a promise against a timeout; resolves with fallback if timeout wins.
+function withTimeout(promise, ms, fallback) {
+  return Promise.race([
+    promise,
+    new Promise(resolve => setTimeout(() => resolve(fallback), ms)),
+  ]);
+}
+
 function Landing({ setScreen }) {
   const [cracking, setCracking] = useState(false);
-
-  // ── Live stat state ───────────────────────────────────────────────────────
-  const [tvlDisplay,        setTvlDisplay]        = useState("—");
-  const [apyDisplay,        setApyDisplay]        = useState("—");
-  const [yieldlingsDisplay, setYieldlingsDisplay] = useState(0);
-  const [tvlLoading,        setTvlLoading]        = useState(true);
-  const [apyLoading,        setApyLoading]        = useState(true);
 
   const TVL_FALLBACK = "$8.8M";
   const APY_FALLBACK = "11.8%";
 
+  // ── Live stat state ───────────────────────────────────────────────────────
+  const [tvlDisplay,        setTvlDisplay]        = useState("—");
+  const [apyDisplay,        setApyDisplay]        = useState("—");
+  // Yieldlings reads localStorage synchronously — show the real count immediately
+  const [yieldlingsDisplay, setYieldlingsDisplay] = useState(() => getYieldlingsTotal());
+  const [tvlLoading,        setTvlLoading]        = useState(true);
+  const [apyLoading,        setApyLoading]        = useState(true);
+
   const crack = () => { setCracking(true); setTimeout(() => setCracking(false), 500); };
 
   useEffect(() => {
-    // ── Animate Yieldlings counter from 0 → current value (1.5s ease-out) ──
-    const target    = getYieldlingsTotal();
-    const duration  = 1500;
-    const startTime = performance.now();
-    const tick = (now) => {
-      const elapsed  = now - startTime;
-      const progress = Math.min(elapsed / duration, 1);
-      const eased    = 1 - Math.pow(1 - progress, 3); // cubic ease-out
-      setYieldlingsDisplay(Math.round(target * eased));
-      if (progress < 1) requestAnimationFrame(tick);
-    };
-    requestAnimationFrame(tick);
+    // ── Fetch TVL + APY in parallel, each with a 3s timeout ─────────────
+    const tvlPromise = withTimeout(
+      getTvl().then(n => (typeof n === "number" && n > 0) ? fmtTvl(n) : TVL_FALLBACK),
+      3000,
+      TVL_FALLBACK,
+    );
+    const apyPromise = withTimeout(
+      getAvgApy().then(avg => (typeof avg === "number" && isFinite(avg) && avg > 0) ? `${avg.toFixed(1)}%` : APY_FALLBACK),
+      3000,
+      APY_FALLBACK,
+    );
 
-    // ── Fetch ZyFAI Total TVL (no wallet needed — public read) ────────────
-    getTvl()
-      .then(n => {
-        const display = (typeof n === "number" && n > 0) ? fmtTvl(n) : TVL_FALLBACK;
-        setTvlDisplay(display);
-        setTvlLoading(false);
+    Promise.all([tvlPromise, apyPromise])
+      .then(([tvl, apy]) => {
+        setTvlDisplay(tvl);
+        setApyDisplay(apy);
       })
       .catch(err => {
-        console.warn("[Landing] getTvl failed:", err);
+        console.warn("[Landing] stats fetch failed:", err);
         setTvlDisplay(TVL_FALLBACK);
-        setTvlLoading(false);
-      });
-
-    // ── Fetch Avg APY (no wallet needed — public read) ────────────────────
-    getAvgApy()
-      .then(avg => {
-        const display = (typeof avg === "number" && isFinite(avg) && avg > 0)
-          ? `${avg.toFixed(1)}%`
-          : APY_FALLBACK;
-        setApyDisplay(display);
-        setApyLoading(false);
-      })
-      .catch(err => {
-        console.warn("[Landing] getAvgApy failed:", err);
         setApyDisplay(APY_FALLBACK);
+      })
+      .finally(() => {
+        setTvlLoading(false);
         setApyLoading(false);
       });
   }, []);
