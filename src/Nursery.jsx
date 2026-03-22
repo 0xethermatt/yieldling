@@ -614,6 +614,10 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
   const [depositing, setDepositing]             = useState(false);
   const [onBase, setOnBase]                     = useState(null); // null=unknown, true, false
   const [ethPrice, setEthPrice]                 = useState(null); // USD per ETH, Volty only
+  const [displayYield, setDisplayYield]         = useState(0);   // smoothly interpolated yield
+  const yieldBaseRef    = useRef(0);     // yieldEarned at last API poll
+  const yieldBaseTime   = useRef(null);  // timestamp of last API poll
+  const rAFRef          = useRef(null);
   const petRef = useRef(null);
   const sparkleId = useRef(0);
   const xpId = useRef(0);
@@ -753,15 +757,33 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
         console.log("[Nursery] getYieldEarned parsed val:", val);
         if (isFinite(val) && val >= 0) {
           setYieldEarned(val);
+          // Reset interpolation baseline so the ticker starts from the real value
+          yieldBaseRef.current  = val;
+          yieldBaseTime.current = Date.now();
+          setDisplayYield(val);
         }
       } catch (err) {
         console.error("[Nursery] getYieldEarned failed:", err);
       }
     };
     poll();
-    const iv = setInterval(poll, 30_000);
+    const iv = setInterval(poll, 10_000);
     return () => clearInterval(iv);
   }, [smartWalletAddress]);
+  // Smoothly tick displayYield forward between polls using current APY + deposited
+  useEffect(() => {
+    const apy = parseFloat(currentApy);
+    if (!isFinite(apy) || apy <= 0 || deposited <= 0) return;
+    const yieldPerMs = (apy / 100) * deposited / (365 * 24 * 3600 * 1000);
+    const tick = () => {
+      if (yieldBaseTime.current === null) return;
+      const elapsed = Date.now() - yieldBaseTime.current;
+      setDisplayYield(yieldBaseRef.current + yieldPerMs * elapsed);
+      rAFRef.current = requestAnimationFrame(tick);
+    };
+    rAFRef.current = requestAnimationFrame(tick);
+    return () => { if (rAFRef.current) cancelAnimationFrame(rAFRef.current); };
+  }, [currentApy, deposited]);
   useEffect(() => {
     if (prevStageName && prevStageName !== stage.name) {
       setShowEvo(true);
@@ -1047,23 +1069,6 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
               <div className="streak-top">🔥 <span className="streak-count">{daysAlive}</span></div>
               <div className="streak-lbl">Days alive</div>
             </div>
-            {onBase !== null && (
-              <div
-                className={`net-badge ${onBase ? "on-base" : "wrong-net"}`}
-                onClick={onBase ? undefined : async () => {
-                  try {
-                    const provider = await getProvider();
-                    toast("🔄 Switching to Base network...");
-                    await ensureBaseChain(provider);
-                    setOnBase(true);
-                  } catch { toast("❌ Could not switch network"); }
-                }}
-                title={onBase ? "Connected to Base" : "Click to switch to Base"}
-              >
-                <span className="net-dot" />
-                {onBase ? "Base" : "Wrong Network"}
-              </div>
-            )}
           </div>
         </div>
         {/* Character Switcher — shown when wallet owns multiple Yieldlings */}
@@ -1085,21 +1090,9 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
             })}
           </div>
         )}
-        {/* Stat Cards */}
+        {/* Stat Cards — Deposited | Yield | APY (wide) */}
         <div className="stat-cards">
-          <div className="stat-card teal">
-            <div className="stat-lbl">Total Yield</div>
-            <div className="stat-val teal">
-              {isVolty ? fmtEth(yieldEarned) : `$${fmt(yieldEarned)}`}
-            </div>
-          </div>
-          <div className="stat-card purple">
-            <div className="stat-lbl">{apyLabel}</div>
-            <div className="stat-val purple">
-              {currentApy !== null ? `${parseFloat(currentApy).toFixed(1)}%` : "—"}
-            </div>
-          </div>
-          <div className="stat-card dim wide">
+          <div className="stat-card dim">
             <div className="stat-lbl">Deposited</div>
             <div className="stat-val white">
               {isVolty
@@ -1108,6 +1101,18 @@ export default function Nursery({ walletAddress, smartWalletAddress, character =
                     {ethPrice !== null && <span style={{ fontSize: 12, color: "var(--dim)", marginLeft: 6 }}>(${fmt(deposited * ethPrice)})</span>}
                   </>
                 : `$${fmt(deposited)}`}
+            </div>
+          </div>
+          <div className="stat-card teal">
+            <div className="stat-lbl">Total Yield</div>
+            <div className="stat-val teal">
+              {isVolty ? fmtEth(displayYield) : `$${fmt(displayYield)}`}
+            </div>
+          </div>
+          <div className="stat-card purple wide">
+            <div className="stat-lbl">{apyLabel}</div>
+            <div className="stat-val purple">
+              {currentApy !== null ? `${parseFloat(currentApy).toFixed(1)}%` : "—"}
             </div>
           </div>
         </div>
