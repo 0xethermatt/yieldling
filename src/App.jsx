@@ -797,7 +797,7 @@ function Landing({ setScreen }) {
   const [cracking, setCracking] = useState(false);
 
   const TVL_FALLBACK = "$8.8M";
-  const APY_FALLBACK = "11.8%";
+  const APY_FALLBACK = "3.7%";
 
   // ── Live stat state ───────────────────────────────────────────────────────
   const [tvlDisplay,        setTvlDisplay]        = useState("—");
